@@ -9,3 +9,10 @@ Springer Verlag, 2009, 33 (2), pp.222-238. 10.1007/s10851-008-0135-9. inria-0061
 This implementation is part of Russell Wustenberg's work with the Visualization, Imaging and Data
 Analysis (VIDA) research lab at New York University's Tandon School of Engineering.
 '''
+
+
+import utilities
+
+import SimpleITK as sitk
+
+img = sitk.ReadImage("~/Documents/data/WristKinematics/'49 haste_cine_1.56ISO BW 500 TR 250_0.nrrd'")

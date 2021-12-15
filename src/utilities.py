@@ -47,3 +47,24 @@ def convertSITK2numpy(img: sitk.Image):
 
 def saveSITKimage(img: sitk.Image, fileName:str, outputFile: str="./images/results"):
     sitk.WriteImage(img, os.path.join(outputFile, fileName))
+
+def makeHomogenous(point: list):
+    temp = []
+    if (type(point) == np.ndarray):
+        temp = point.tolist()
+        temp.append(1)
+        temp = np.array(temp)
+    else:
+        temp = point
+        temp.append(1)
+    return temp
+
+def makeCartesian(point: list):
+    temp = []
+    if(type(point) == np.ndarray):
+        tempPoint = point.tolist()
+        temp = [x / tempPoint[-1] for x in tempPoint[:-1]]
+    else:
+        temp = [x / point[-1] for x in point[:-1]]
+    return temp
+

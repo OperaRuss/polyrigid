@@ -1,2 +1,4 @@
 /venv/
 /.idea/
+src/__pycache__/utilities.cpython-39.pyc
+src/__pycache__/Shape.cpython-39.pyc

@@ -11,8 +11,10 @@ Analysis (VIDA) research lab at New York University's Tandon School of Engineeri
 '''
 
 
-import utilities
+import utilities as utils
 
 import SimpleITK as sitk
 
 img = sitk.ReadImage("~/Documents/data/WristKinematics/'49 haste_cine_1.56ISO BW 500 TR 250_0.nrrd'")
+
+utils.showSITK_InEditor_BW(img)

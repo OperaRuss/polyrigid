@@ -86,7 +86,7 @@ def getRadiansFromDegrees(degrees):
         print("This function takes in arguments of type float or list of floats.")
         return None
 
-def getRotationMatrixFromDegrees(radians, dimensions: int=2):
+def getRotationMatrixFromRadians(radians, dimensions: int=2):
     '''
     This function takes in angles of rotation and outputs a rotation matrix of the same dimension specified.
 
@@ -104,26 +104,34 @@ def getRotationMatrixFromDegrees(radians, dimensions: int=2):
         # Assumes that all three dimensions are receiving the same angle of rotation, ie. X=Y=Z.
         if type(radians) == float:
             if(dimensions == 3):
-                outRotationX = [[1, 0,                0              ],
-                                [0, np.cos(radians), -np.sin(radians)],
-                                [0, np.sin(radians),  np.cos(radians)]]
+                outRotationX = [[1, 0,                0              , 0],
+                                [0, np.cos(radians), -np.sin(radians), 0],
+                                [0, np.sin(radians),  np.cos(radians), 0],
+                                [0, 0,                0,               1]]
                 outRotationMatricies.append(outRotationX)
 
-                outRotationY = [[np.cos(radians),   0,  np.sin(radians)],
-                                [0,                 1,  0              ],
-                                [-np.sin(radians),  0,  np.cos(radians)]]
+                outRotationY = [[np.cos(radians),   0,  np.sin(radians), 0],
+                                [0,                 1,  0              , 0],
+                                [-np.sin(radians),  0,  np.cos(radians), 0],
+                                [0, 0,                0,                 1]]
+
                 outRotationMatricies.append(outRotationY)
 
-                outRotationZ = [[np.cos(radians),  -np.sin(radians), 0],
-                                [np.sin(radians),   np.cos(radians), 0],
-                                [0,                 0,               1]]
+                outRotationZ = [[np.cos(radians),  -np.sin(radians), 0, 0],
+                                [np.sin(radians),   np.cos(radians), 0, 0],
+                                [0,                 0,               1, 0],
+                                [0,                 0,               0, 1]]
                 outRotationMatricies.append(outRotationZ)
 
-                return np.array(outRotationMatricies, dtype=np.float64)
+                outMat = np.dot(outRotationMatricies[0], 
+                                       np.dot(outRotationMatricies[1], outRotationMatricies[2]))
+
+                return np.array(outMat, dtype=np.float64)
             else:
-                outRotation2D = [[np.cos(radians), -np.sin(radians)],
-                                 [np.sin(radians),  np.cos(radians)]]
-                return np.array(outRotation2D, dtype=np.float64)
+                outMat = [[np.cos(radians), -np.sin(radians), 0],
+                                 [np.sin(radians),  np.cos(radians), 0],
+                                 [0,                0,               1]]
+                return np.array(outMat, dtype=np.float64)
 
         elif type(radians) == list:
             if len(radians) != 3:

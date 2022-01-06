@@ -1,4 +1,5 @@
 import numpy as np
+import utilities as utils
 from scipy import ndimage
 
 
@@ -80,32 +81,31 @@ def getNormalizedCommowickWeight(listComponentSegmentation: list, listParamsRate
     return listNormalizedWeights
     
 
-import Shape
+def testFunction():
+    import Shape
 
-img = np.zeros((64,64), dtype=np.float64)
-c = Shape.Ellipse([32,32],30,10,2)
+    img = np.zeros((64,64), dtype=np.float64)
+    c = Shape.Ellipse([32,32],30,10,2)
 
-for x in range(img.shape[0]):
-    for y in range(img.shape[1]):
-        if(c.isWithin([x,y])):
-            img[x,y] = 1.0
+    for x in range(img.shape[0]):
+        for y in range(img.shape[1]):
+            if(c.isWithin([x,y])):
+                img[x,y] = 1.0
 
-img1 = np.zeros((64,64), dtype=np.float64)
-c = Shape.Ellipse([12,12],10,10,2)
-for x in range(img.shape[0]):
-    for y in range(img.shape[1]):
-        if(c.isWithin([x,y])):
-            img1[x,y] = 1.0
+    img1 = np.zeros((64,64), dtype=np.float64)
+    c = Shape.Ellipse([12,12],10,10,2)
+    for x in range(img.shape[0]):
+        for y in range(img.shape[1]):
+            if(c.isWithin([x,y])):
+                img1[x,y] = 1.0
 
-listImages = [img, img1]
-listRatesOfDecay = [0.25, 0.1]
+    listImages = [img, img1]
+    listRatesOfDecay = [0.25, 0.1]
 
-import utilities as utils
+    for n in range(len(listImages)):
+        utils.showNDA_InEditor_BW(listImages[n], "Image " + str(n))
 
-for n in range(len(listImages)):
-    utils.showNDA_InEditor_BW(listImages[n], "Image " + str(n))
+    listNormalizedWeights = getNormalizedCommowickWeight(listImages, listRatesOfDecay, is3D=False)
 
-listNormalizedWeights = getNormalizedCommowickWeight(listImages, listRatesOfDecay, is3D=False)
-
-for n in range(len(listImages)):
-    utils.showNDA_InEditor_BW(listNormalizedWeights[n], "Normalized " + str(n) + ", Max: " + str(np.max(listNormalizedWeights[n])))
+    for n in range(len(listImages)):
+        utils.showNDA_InEditor_BW(listNormalizedWeights[n], "Normalized " + str(n) + ", Max: " + str(np.max(listNormalizedWeights[n])))

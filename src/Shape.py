@@ -147,8 +147,7 @@ def testImages():
     segs = [seg1, seg2]
     infl = [0.5,0.5]
 
-    components = Component.RigidComponents(2,infl,segs,(64,64))
-    components.setNormalizedComponentWeights()
+    components = Component.RigidComponentBatchConstructor(2, infl, segs, (64, 64))
 
     fixedImage = np.zeros((64, 64), dtype=np.float64)
     c1.center = [40,35]

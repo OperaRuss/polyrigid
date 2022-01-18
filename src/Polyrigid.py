@@ -1,13 +1,22 @@
 import Image
 import skimage
 import SimpleITK as sitk
+import numpy as np
 
 class PolyrigidRegistrar():
     def __init__(self, movingImage: Image.WarpedImage, targetImage: Image.FixedImage,
-                 metric: str='JHMI'):
+                 metric: str='JHMI', scalingFactor: int=10):
+        '''
+        This 'registrar' class encapsulates all necessary functions for
+        :param movingImage:
+        :param targetImage:
+        :param metric:
+        :param scalingFactor:
+        '''
         self.mMovingImage = movingImage
         self.mTargetImage = targetImage
         self.mMetric = metric
+        self.mScalingFactor = scalingFactor
         self.mMetricJHMIBins = 50
         self.mMetricRMSENormalization = 'euclidean'
         self.mLearningRates = [0.8,0.1,0.03]
@@ -39,6 +48,24 @@ class PolyrigidRegistrar():
     def setLearningRates(self, newLearningRates: list):
         self.mLearningRates = newLearningRates
 
+    def getScalingFactor(self):
+        return self.mScalingFactor
+
+    def setScalingFactor(self, newScalingFactor: int):
+        self.mScalingFactor = newScalingFactor
+
+    def successiveScalingByDivision(self, affineTransformMat: np.ndarray):
+        pass
+
+    def successiveScalingByMultiplication(self, affineLogVelocityMat: np.ndarray):
+        pass
+
+    def successiveSquaring(self, affineLogVelocityMat: np.ndarray):
+        pass
+
+    def successiveSquareRoots(self, affineTransformMat: np.ndarray):
+        pass
+
 def testFunction():
     import utilities as utils
 
@@ -49,14 +76,15 @@ def testFunction():
     a = PolyrigidRegistrar(moving,fixed)
     b = utils.getRotationMatrixFromRadians(utils.getRadiansFromDegrees(-20.0))
     c = utils.getRotationMatrixFromRadians(utils.getRadiansFromDegrees(10.0))
-    a.mMovingImage.mComponents.mComponentList[0].setUpdatedRotation(b[:-1, :-1])
-    a.mMovingImage.mComponents.mComponentList[1].setUpdatedRotation(c[:-1, :-1])
+    a.mMovingImage.mComponents[0].setUpdatedRotation(b[:-1, :-1])
+    a.mMovingImage.mComponents[1].setUpdatedRotation(c[:-1, :-1])
 
     import SimpleITK as sitk
+
+    fixed = a.mTargetImage.mImage
     unwarped = a.mMovingImage.mImage
     warped = a.mMovingImage.getWarpedImage()
-    utils.showNDA_InEditor_BW(unwarped)
-    utils.showNDA_InEditor_BW(sitk.GetArrayFromImage(warped))
+    utils.showNDA_InEditor_BW(fixed, "Fixed Test Image")
+    utils.showNDA_InEditor_BW(unwarped, "Moving Test Image, Unwarped")
+    utils.showNDA_InEditor_BW(sitk.GetArrayFromImage(warped), "Moving Test Image, Warped")
     print(a.getMetric())
-
-testFunction()

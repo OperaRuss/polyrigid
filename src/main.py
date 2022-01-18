@@ -9,7 +9,7 @@ Springer Verlag, 2009, 33 (2), pp.222-238. 10.1007/s10851-008-0135-9. inria-0061
 This implementation is part of Russell Wustenberg's work with the Visualization, Imaging and Data
 Analysis (VIDA) research lab at New York University's Tandon School of Engineering.
 '''
-
+import copy
 
 import Polyrigid
 

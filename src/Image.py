@@ -1,7 +1,8 @@
+import copy
 import SimpleITK as sitk
 import numpy as np
-import matplotlib.pyplot as plt
 import Component
+import Weights
 
 def loadNII(filePath: str):
     '''
@@ -42,9 +43,24 @@ class Image():
         return self.mDimensions
 
 
+class FixedImage(Image):
+    def __init__(self, imageData: np.ndarray, imageAffine: np.ndarray, imageHeader,
+                 dimensions: int = 2):
+        '''
+        Currently, the only function of the fixed image is to pass all parameters on to the
+        base image class.
+
+        :param imageData: Intensity data for image to be warped.
+        :param imageAffine: NII-type affine transformation matrix for adjustments.
+        :param imageHeader: NIfTY1 metadata header preserved for repackaging after manipulation.
+        :param imageComponents: A list of Component-class objects present in the image.
+        :param dimensions: Integer indicating if te base image is 2D or 3D
+        '''
+        Image.__init__(self, imageData, imageAffine, imageHeader, dimensions)
+
 class WarpedImage(Image):
-    def __init__(self,imageData: np.ndarray, imageAffine: np.ndarray, imageHeader,
-                 imageComponents: Component.RigidComponents, dimensions: int=2):
+    def __init__(self, imageData: np.ndarray, imageAffine: np.ndarray, imageHeader,
+                 imageComponents: Component.RigidComponentBatchConstructor, dimensions: int=2):
         '''
         The Warped Image class provides a container for all data required to map the moving image onto the
         fixed image by use of a constructed displacement field.  The field is composed of vector displacements
@@ -59,8 +75,46 @@ class WarpedImage(Image):
         '''
 
         Image.__init__(self,imageData,imageAffine,imageHeader,dimensions)
-        self.mComponents = imageComponents
-        self.mComponents.setNormalizedComponentWeights()
+        self.mComponents = copy.deepcopy(imageComponents.mComponentList)
+        self.setNormalizedComponentWeights()
+
+    def setNormalizedComponentWeights(self):
+        segmentations = []
+        ratesOfDecay = []
+        normalizedWeights = []
+
+        for component in self.mComponents:
+            segmentations.append(component.mSegmentationImage)
+            ratesOfDecay.append(component.mRateOfDecay)
+
+        if self.mComponents[0].mDimensions == 2:
+            normalizedWeights = Weights.getNormalizedCommowickWeight(segmentations, ratesOfDecay, is3D=False)
+        else:
+            normalizedWeights = Weights.getNormalizedCommowickWeight(segmentations, ratesOfDecay, is3D=True)
+
+        # ToDo Add branching for isotropic vs anisotropic gaussian images
+        # ToDo Figure out how to do in 3D...
+
+        for idx in range(len(self.mComponents)):
+            self.mComponents[idx].mNormalizedWeightImage = normalizedWeights[idx]
+
+    def getWeightsAtCoordinate(self, Xcoord: int, Ycoord: int, Zcoord=None):
+        '''
+        Fetch function to return all component weights at a given pixel from their normalized weighting images.
+
+        :param Xcoord: Row coordinate of the voxel
+        :param Ycoord: Column coordinate of the voxel
+        :param Zcoord: Depth coordinate of the voxel
+        :return: A list of in-order component weights for the given pixel.
+        '''
+        componentWeights = []
+        if len(self.mImage.shape) == 2:
+            for component in self.mComponents:
+                componentWeights.append(component.mNormalizedWeightImage[Xcoord][Ycoord])
+        else:
+            for component in self.mComponents:
+                componentWeights.append(component.mNormalizedWeightImage[Xcoord][Ycoord][Zcoord])
+        return componentWeights
 
     def getWarpedImage(self):
         # Figure out image shape
@@ -101,7 +155,7 @@ class WarpedImage(Image):
         imageShape = self.mImage.shape
         transformMatrices = []
 
-        for component in self.mComponents.mComponentList:
+        for component in self.mComponents:
             transformMatrices.append(component.getAffineTransformMatrix())
 
         # Populate the displacement field
@@ -114,7 +168,7 @@ class WarpedImage(Image):
             # Intensity Image Shape is (M,N,1)
             for row in range(self.mImage.shape[0]):
                 for col in range(self.mImage.shape[1]):
-                    coordWeights = self.mComponents.getWeightsAtCoordinate(row,col)
+                    coordWeights = self.getWeightsAtCoordinate(row,col)
                     for idx in range(len(transformMatrices)):
                         transformField[row][col] += transformMatrices[idx] * coordWeights[idx]
         else:
@@ -144,20 +198,7 @@ class WarpedImage(Image):
 
         return warpImage(self.mImage,displacementField)
 
-class FixedImage(Image):
-    def __init__(self, imageData: np.ndarray, imageAffine: np.ndarray, imageHeader,
-                 dimensions: int = 2):
-        '''
-        Currently, the only function of the fixed image is to pass all parameters on to the
-        base image class.
 
-        :param imageData: Intensity data for image to be warped.
-        :param imageAffine: NII-type affine transformation matrix for adjustments.
-        :param imageHeader: NIfTY1 metadata header preserved for repackaging after manipulation.
-        :param imageComponents: A list of Component-class objects present in the image.
-        :param dimensions: Integer indicating if te base image is 2D or 3D
-        '''
-        Image.__init__(self, imageData, imageAffine, imageHeader, dimensions)
 
 def testFunction():
     import Shape

@@ -4,6 +4,13 @@ import matplotlib.pyplot as plt
 import SimpleITK as sitk
 
 def showNDA_InEditor_BW(img: np.ndarray, title: str=""):
+    '''
+    Basic 'show' function for a numpy type array.
+
+    :param img: 2- or 3-dimensional numpy array.
+    :param title: If you want to label the image, include a string.
+    :return:
+    '''
     try:
         plt.imshow(img, cmap='gray')
         plt.title(title)
@@ -16,6 +23,14 @@ def showNDA_InEditor_BW(img: np.ndarray, title: str=""):
             print("Something is not quite right about your image.")
 
 def showSITK_InEditor_BW(img: sitk.Image, title: str=""):
+    '''
+    Basic display function for an SITK type image.  Sometimes does not work with
+    my IDE but does not thrown an error.
+
+    :param img: SimpleITK Image.
+    :param title: Title, if one is wished.
+    :return:
+    '''
     try:
         ndarr = sitk.GetArrayViewFromImage(img)
         plt.imshow(ndarr, cmap='gray')
@@ -28,27 +43,35 @@ def showSITK_InEditor_BW(img: sitk.Image, title: str=""):
         else:
             print("Something is not quite right about your image.")
 
-def showInEditor_RGB(img: sitk.Image, title: str=""):
-    try:
-        ndarr = sitk.GetArrayViewFromImage(img)
-        plt.imshow(ndarr)
-        plt.title(title)
-        plt.axis('off')
-        plt.show()
-    except:
-        if img.GetDimension() != 2:
-           print("Ensure that you are passing an image slice and not a volume.")
-        else:
-            print("Something is not quite right about your image.")
-
 def convertSITK2numpy(img: sitk.Image):
+    '''
+    :param img: A SimpleITK Image
+    :return: Returns the contents of the SITK image as a numpy array.  Discards header and affine.
+    '''
     nda = sitk.GetArrayFromImage(img)
     return nda
 
-def saveSITKimage(img: sitk.Image, fileName:str, outputFile: str="./images/results"):
+def convertNumpy2SITK(img: np.ndarray):
+    '''
+    :param img: A 2- or 3-dimensional numpy array to be converted.
+    :return: Returns a SimpleITK image.  Assumes affine transform is identity.
+    '''
+    img = sitk.GetImageFromArray(img)
+    return img
+
+def saveSITKimage(img: sitk.Image, fileName:str, outputFile: str="../images/results"):
     sitk.WriteImage(img, os.path.join(outputFile, fileName))
 
-def makeHomogenous(point: list):
+def saveNPimage_2D_BW(img: np.ndarray, fileName:str,outputFile: str="../images/results"):
+    plt.imshow(img, cmap='gray')
+    plt.axis('off')
+    plt.savefig(os.path.join(outputFile,fileName), bbox_inches='tight')
+
+def makeHomogenous(point):
+    '''
+    :param point: List of coordinates [X, Y, Z, etc]
+    :return: Same point but now in homogeneous coordinates.
+    '''
     temp = []
     if (type(point) == np.ndarray):
         temp = point.tolist()
@@ -59,7 +82,12 @@ def makeHomogenous(point: list):
         temp.append(1)
     return temp
 
-def makeCartesian(point: list):
+def makeCartesian(point):
+    '''
+
+    :param point: A point in homogeneous coordinate form.
+    :return: The same point but de-homogenized (in Cartesian coordinates).
+    '''
     temp = []
     if(type(point) == np.ndarray):
         tempPoint = point.tolist()
@@ -161,3 +189,38 @@ def getRotationMatrixFromRadians(radians, dimensions: int=2):
         print(  "Input should be of type float when angle of rotation is the same for X, " +
                 "Y and Z or list of floats in the order (X, Y, Z) when different." )
         return -1
+
+def normalizeImage(img: np.ndarray):
+    '''
+    :param img: A numpy array of un-normalized values of any range.
+    :return: The same image, normalized to the range [0.0,1.0]
+    '''
+    max = np.max(img)
+    min = np.min(img)
+    temp = np.subtract(img, min)
+    temp = np.divide(img, (max - min))
+    return temp
+
+def normalizeForImageOutput(img: np.ndarray):
+    '''
+    :param img: A numpy array with values of any range.
+    :return: The same image quantized to the standard [0,255] intensity scale.
+    '''
+    temp = normalizeImage(img)
+    temp = np.multiply(temp, 255)
+    temp = np.floor(temp)
+    temp = np.array(temp,np.ushort)
+    return temp
+
+def resampleImage(image: sitk.SimpleITK.Image, transform):
+    '''
+    This function was borrowed from the Kitware SimpleITK tutorial notebooks.
+
+    :param image: A SimpleITK Image.
+    :param transform: A displacement field transform with the same dimensions as the image.
+    :return: The input image under the provided displacement transform.
+    '''
+    reference_image = image
+    interpolator = sitk.sitkNearestNeighbor
+    default_value = 0.0
+    return sitk.Resample(image, reference_image, transform, interpolator, default_value)

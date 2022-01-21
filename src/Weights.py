@@ -50,7 +50,7 @@ def getNormalizedCommowickWeight(componentSegmentations: dict, ratesOfDecay: dic
     '''
 
     commowickWeights = {}
-    for label, segmentation in componentSegmentations:
+    for label, segmentation in componentSegmentations.items():
         commowickWeights[label] = getCommowickWeight(segmentation, ratesOfDecay[label])
     
     imageDimensions = componentSegmentations[0].shape
@@ -72,7 +72,7 @@ def getNormalizedCommowickWeight(componentSegmentations: dict, ratesOfDecay: dic
     
     normalizedWeights = {}
 
-    for label, image in commowickWeights:
+    for label, image in commowickWeights.items():
         normalizedWeights[label] = np.divide(image, sumImage)
     
     return normalizedWeights

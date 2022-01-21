@@ -66,9 +66,9 @@ class RigidComponentBatchConstructor():
         '''
         # todo add centroid-based definition of component with generated Gaussian weighting function
 
-        self.mComponentList = []
+        self.mComponentDict = {}
 
         for idx in range(len(componentSegmentations)):
             # todo Confirm that using an int as the label is the optimal choice
-            self.mComponentList.append(Component(label=idx, dimensions=dimensions, segmentation=componentSegmentations[idx],
-                                                 rateOfDecay=ratesOfDecay[idx]))
+            self.mComponentDict[idx] = Component(label=idx, dimensions=dimensions, segmentation=componentSegmentations[idx],
+                                                 rateOfDecay=ratesOfDecay[idx])

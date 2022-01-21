@@ -28,11 +28,22 @@ class PolyrigidRegistrar():
         self.mLearningRates = [0.8,0.1,0.03]
         self.mMaxIterations = 1000
         self.mCurrIteration = 0
+        self.displacementField = None
 
     def getMetric(self):
+        if not type(self.mMovingImage.mWarpedImage) == sitk.SimpleITK.Image:
+            movingImage = sitk.GetImageFromArray(self.mMovingImage.mWarpedImage, isVector=False)
+        else:
+            movingImage = self.mMovingImage.mWarpedImage
+
+        if not type(self.mTargetImage.mImage) == sitk.SimpleITK.Image:
+            targetImage = sitk.GetImageFromArray(self.mTargetImage.mImage,isVector=False)
+        else:
+            targetImage = self.mTargetImage.mImage
+
         if(self.mMetric == 'JHMI'):
-            return skimage.metrics.normalized_mutual_information(sitk.GetArrayFromImage(self.mMovingImage.getWarpedImage()),
-                                                                 self.mTargetImage.mImage,
+            return skimage.metrics.normalized_mutual_information(movingImage,
+                                                                 targetImage,
                                                                  bins=self.mMetricJHMIBins)
 
         elif(self.mMetric == 'RMSE'):
@@ -114,6 +125,20 @@ class PolyrigidRegistrar():
             displacementfield = None
         return displacementfield
 
+    def getStandardWeightedTransform(self, Xcoord: int, Ycoord:int, Zcoord: int=None):
+        '''
+        Function to return a composed, standard (non-polyrigid) weighted transform matrix as a baseline.
+        :return: A square affine transformation matrix in homogeneous coordinates.
+        '''
+        weights = self.mMovingImage.getWeightsAtCoordinate(Xcoord, Ycoord, Zcoord)
+        transforms = self.mMovingImage.getComponentTransforms()
+        compositeTransform = np.zeros((self.mMovingImage.mDimensions + 1, self.mMovingImage.mDimensions + 1),
+                                      dtype=np.float64)
+
+        for component, weight in weights.items():
+            compositeTransform += np.multiply(weight, transforms[component])
+        return compositeTransform
+
     def getLEPT(self, Xcoord: int, Ycoord: int, Zcoord: int=None):
         '''
         Function to return the composed log-Euclidean Polyaffine Transform matrix at a specific pixel location.
@@ -123,13 +148,13 @@ class PolyrigidRegistrar():
         transforms = self.mMovingImage.getComponentTransforms()
         logTransforms = {}
 
-        for component, transform in transforms:
+        for component, transform in transforms.items():
             logTransforms[component] = self.getMatrixLogarithm(transform)
 
-        compositeTransform = np.zeros(self.mMovingImage.mDimensions + 1, dtype=np.float64)
+        compositeTransform = np.zeros((self.mMovingImage.mDimensions + 1,self.mMovingImage.mDimensions + 1), dtype=np.float64)
 
-        for component, weight in weights:
-            compositeTransform += weight * logTransforms[component]
+        for component, weight in weights.items():
+            compositeTransform += np.multiply(weight,logTransforms[component])
 
         return self.getMatrixExponential(compositeTransform)
 
@@ -149,8 +174,8 @@ class PolyrigidRegistrar():
                 for col in range(imageShape[1]):
                     point = utils.makeHomogeneous([row,col])
                     newPoint = np.dot(transformImage[row,col],point)
-                    displacement = newPoint - point
-                    displacementField[row,col] = utils.makeCartesian(displacement)
+                    displacement = np.subtract(utils.makeCartesian(newPoint),utils.makeCartesian(point))
+                    displacementField[row,col] = displacement
         else:
             for row in range(imageShape[0]):
                 for col in range(imageShape[1]):
@@ -165,6 +190,7 @@ class PolyrigidRegistrar():
                         displacement = newPoint - point
                         displacementField[row,col] = utils.makeCartesian(displacement)
 
+        self.displacementField = displacementField
         return displacementField
 
 
@@ -192,17 +218,18 @@ def testFunction():
     c = utils.getRotationMatrixFromRadians(utils.getRadiansFromDegrees(10.0))
     a.mMovingImage.mComponents[0].setUpdatedRotation(b[:-1, :-1])
     a.mMovingImage.mComponents[1].setUpdatedRotation(c[:-1, :-1])
+    d = a.getDisplacementField()
 
     import SimpleITK as sitk
 
     fixed = a.mTargetImage.mImage
     unwarped = a.mMovingImage.mImage
-    warped = a.mMovingImage.getWarpedImage()
-    compWarp = a.mMovingImage.mComponents[0].getWarpedSegmentation()
+    warped = a.mMovingImage.getWarpedImage(d)
+    # compWarp = a.mMovingImage.mComponents[0].getWarpedSegmentation()
     utils.showNDA_InEditor_BW(fixed, "Fixed Test Image")
     utils.showNDA_InEditor_BW(unwarped, "Moving Test Image, Unwarped")
-    utils.showNDA_InEditor_BW(sitk.GetArrayFromImage(warped), "Moving Test Image, Warped")
-    utils.showNDA_InEditor_BW(sitk.GetArrayFromImage(compWarp), "Warped Segmentation")
-    print(a.getMetric())
+    utils.showNDA_InEditor_BW(sitk.GetArrayFromImage(a.mMovingImage.mWarpedImage), "Moving Test Image, Warped")
+    # utils.showNDA_InEditor_BW(sitk.GetArrayFromImage(compWarp), "Warped Segmentation")
+    # print(a.getMetric())
 
 testFunction()

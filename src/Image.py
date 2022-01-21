@@ -76,7 +76,8 @@ class WarpedImage(Image):
 
         Image.__init__(self,imageData,imageAffine,imageHeader,dimensions)
         # todo Refactor container to make sure it works with the new dictionary structure
-        self.mComponents = copy.deepcopy(imageComponents.mComponentList)
+        self.mComponents = copy.deepcopy(imageComponents.mComponentDict)
+        self.mWarpedImage = None
         self.setNormalizedComponentWeights()
 
     def setNormalizedComponentWeights(self):
@@ -84,7 +85,7 @@ class WarpedImage(Image):
         ratesOfDecay = {}
         normalizedWeights = {}
 
-        for component in self.mComponents:
+        for label, component in self.mComponents.items():
             segmentations[component.getLabel()] = component.mSegmentationImage
             ratesOfDecay[component.getLabel()] = component.mRateOfDecay
 
@@ -105,8 +106,8 @@ class WarpedImage(Image):
         :return: Returns a square affine transformation matrix in a homogeneous coordinate system.
         '''
         componentTransforms = {}
-        for component in self.mComponents:
-            componentTransforms[component.getLabel()] = component.getAffineTransformMatrix()
+        for label, component in self.mComponents.items():
+            componentTransforms[label] = component.getAffineTransformMatrix()
         return componentTransforms
 
     def getWeightsAtCoordinate(self, Xcoord: int, Ycoord: int, Zcoord=None):
@@ -119,15 +120,11 @@ class WarpedImage(Image):
         :return: A list of in-order component weights for the given pixel.
         '''
         componentWeights = {}
-        for component in self.mComponents:
-            componentWeights[component.getLabel()] = component.getWeightAtCoordinate(Xcoord,Ycoord,Zcoord)
+        for label, component in self.mComponents.items():
+            componentWeights[label] = component.getWeightAtCoordinate(Xcoord,Ycoord,Zcoord)
         return componentWeights
 
-    def getWarpedImage(self):
-        # Figure out image shape
-        # Tack on appropriate affine matrix (different for each case!)
-        # create displacement field for vector image
-        # populate by taking each pixel position and for each component multiplying it's affine transform by the weight
+    def getWarpedImage(self, displacementField: np.ndarray):
 
         def resampleImage(image: sitk.SimpleITK.Image, transform):
             '''
@@ -150,60 +147,9 @@ class WarpedImage(Image):
             post = resampleImage(img, disp)
             return post
 
-        def makeCartesian(point):
-            temp = []
-            if (type(point) == np.ndarray):
-                tempPoint = point.tolist()
-                temp = [x / tempPoint[-1] for x in tempPoint[:-1]]
-            else:
-                temp = [x / point[-1] for x in point[:-1]]
-            return temp
+        self.mWarpedImage = warpImage(self.mImage, displacementField)
 
-        imageShape = self.mImage.shape
-        transformMatrices = []
-
-        for component in self.mComponents:
-            transformMatrices.append(component.getAffineTransformMatrix())
-
-        # Populate the displacement field
-        if self.mDimensions == 2:
-            imageShape = list(imageShape)
-            imageShape += [3, 3]  # homogeneous coordinate affine matrix for a 2D image
-            imageShape = tuple(imageShape)
-            transformField = np.zeros(imageShape, dtype=np.float64)
-
-            # Intensity Image Shape is (M,N,1)
-            for row in range(self.mImage.shape[0]):
-                for col in range(self.mImage.shape[1]):
-                    coordWeights = self.getWeightsAtCoordinate(row,col)
-                    for idx in range(len(transformMatrices)):
-                        transformField[row][col] += transformMatrices[idx] * coordWeights[idx]
-        else:
-            # Image is a 3D image
-            pass
-
-        # We now have the displacement Field, but it is composed of affine transformation matrices (not
-        # displacement vectors.  We have to take the element-wise dot product of each of these matrices
-        # with the original point vector.  This gives us the resulting sample point in the new image.
-        # We then subtract the old from the new in order to find the forward displacement vectors.
-        # We also must ensure that we de-homogenize the coordinates!
-
-        # todo add a branching statement for 3D.
-        imageShape = list(self.mImage.shape)
-        imageShape += [2]  # 2D displacement vector for a 2D image
-        imageShape = tuple(imageShape)
-
-        displacementField = np.zeros(imageShape,dtype=np.float64)
-
-        for row in range(self.mImage.shape[0]):
-            for col in range(self.mImage.shape[1]):
-                oldPoint = np.array([row,col,1])
-                newPoint = np.dot(transformField[row][col],oldPoint)
-                newPoint = makeCartesian(newPoint)
-
-                displacementField[row][col] = np.subtract(newPoint, oldPoint[:-1])
-
-        return warpImage(self.mImage,displacementField)
+        return self.mWarpedImage
 
 
 

@@ -12,5 +12,15 @@ Analysis (VIDA) research lab at New York University's Tandon School of Engineeri
 import copy
 
 import Polyrigid
+import numpy as np
 
-Polyrigid.testFunction()
+a = [[1.0,0.0,3.0],[0.0,1.0,0.0],[0.0,0.0,2.0]]
+a = np.array(a)
+
+import utilities as utils
+
+
+b = utils.makeCartesian(a)
+
+print(type(b['translation']),type(b['rotation']))
+

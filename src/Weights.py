@@ -35,7 +35,7 @@ def getCommowickWeight(componentSegmentation: np.ndarray, gamma: float):
     # 2.0 / ( 1.0 + np.exp(0.4 * getDistanceToComponentRegion(componentSegmentation))
     return (1.0 / (1.0 + (gamma * pow(getDistanceToComponentRegion(componentSegmentation), 2))))
 
-def getNormalizedCommowickWeight(listComponentSegmentation: list, listParamsRateOfDecay: list, is3D: bool=False):
+def getNormalizedCommowickWeight(componentSegmentations: dict, ratesOfDecay: dict):
     '''
     Function computes the normalized contribution weight at each pixel for each component. First,
     the raw contribution is contributed using the Commowick weight function.  Then, a sum is calculated
@@ -48,33 +48,31 @@ def getNormalizedCommowickWeight(listComponentSegmentation: list, listParamsRate
     :param is3D: boolean argument for whether images are 3D (True) or 2D (False).
     :return: a list of numpy arrays containing normalized contribution weight of each component
     '''
-    numComponents = len(listComponentSegmentation)
-    listCommowickWeights = []
-    for idx in range(numComponents):
-        listCommowickWeights.append(getCommowickWeight(listComponentSegmentation[idx], listParamsRateOfDecay[idx]))
-    
-    imWidth = listComponentSegmentation[0].shape[0]
-    imHeight = listComponentSegmentation[0].shape[1]
-    if(is3D):
-        imDepth = listComponentSegmentation[0].shape[3]
-        sumImage = np.zeros((imWidth,imHeight),dtype=np.float64)
 
-        for x in range(imWidth):
-            for y in range(imHeight):
-                for z in range(imDepth):
-                    for n in range(numComponents):
-                        sumImage[x,y] += listCommowickWeights[n][x,y]
+    commowickWeights = {}
+    for label, segmentation in componentSegmentations:
+        commowickWeights[label] = getCommowickWeight(segmentation, ratesOfDecay[label])
+    
+    imageDimensions = componentSegmentations[0].shape
+    if(len(imageDimensions) == 3):
+        sumImage = np.zeros((imageDimensions[0],imageDimensions[1],imageDimensions[2]),dtype=np.float64)
+
+        for x in range(imageDimensions[0]):
+            for y in range(imageDimensions[1]):
+                for z in range(imageDimensions[2]):
+                    for image in commowickWeights.values():
+                        sumImage[x,y,z] += image[x,y,z]
     else:
-        sumImage = np.zeros((imWidth, imHeight), dtype=np.float64)
+        sumImage = np.zeros((imageDimensions[0],imageDimensions[1]), dtype=np.float64)
 
-        for x in range(imWidth):
-            for y in range(imHeight):
-                for n in range(numComponents):
-                    sumImage[x,y] += listCommowickWeights[n][x,y]
+        for x in range(imageDimensions[0]):
+            for y in range(imageDimensions[1]):
+                for image in commowickWeights.values():
+                    sumImage[x,y] += image[x,y]
     
-    listNormalizedWeights = []
+    normalizedWeights = {}
 
-    for n in range(numComponents):
-        listNormalizedWeights.append(np.divide(listCommowickWeights[n], sumImage))
+    for label, image in commowickWeights:
+        normalizedWeights[label] = np.divide(image, sumImage)
     
-    return listNormalizedWeights
+    return normalizedWeights

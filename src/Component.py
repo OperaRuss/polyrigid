@@ -4,7 +4,7 @@ import utilities as utils
 import Weights
 
 class Component():
-    def __init__(self,dimensions: int,rateOfDecay: float, segmentation: np.ndarray):
+    def __init__(self,label, dimensions: int,rateOfDecay: float, segmentation: np.ndarray):
         '''
         A Component is the basic building block of the Polyrigid algorithm. Its primary functions are
         to possess the rotation and translation data for the component and to compose that data into a
@@ -14,12 +14,31 @@ class Component():
         :param rateOfDecay: Float value determining the rate of decay (or influence) of the component relative to the others in the image.
         :param segmentation: Numpy array immage of dtype=np.float64 containing the rigid component segmentation.
         '''
+        self.mLabel = label
         self.mDimensions = dimensions
         self.mSegmentationImage = segmentation
         self.mNormalizedWeightImage = None
         self.mRotation = np.eye(dimensions,dtype=np.float64)
         self.mTranslation = np.zeros((dimensions,1),dtype=np.float64)
         self.mRateOfDecay = rateOfDecay
+
+    def getLabel(self):
+        return self.mLabel
+
+    def getSegmentationImage(self):
+        return self.mSegmentationImage
+
+    def getWeightAtCoordinate(self, Xcoord: int, Ycoord: int, Zcoord: int=None):
+        if self.mDimensions == 2:
+            return self.mNormalizedWeightImage[Xcoord, Ycoord]
+        else:
+            return self.mNormalizedWeightImage[Xcoord, Ycoord, Zcoord]
+
+    def setUpdatedRotation(self, newRotation: np.ndarray):
+        self.mRotation = newRotation
+
+    def setUpdatedTranslation(self, newTranslation: np.ndarray):
+        self.mTranslation = newTranslation
 
     def getAffineTransformMatrix(self):
         '''
@@ -32,32 +51,6 @@ class Component():
         affineMat = np.vstack((temp,homoRow))
         return affineMat
 
-    def setUpdatedRotation(self, newRotation: np.ndarray):
-        self.mRotation = newRotation
-
-    def setUpdatedTranslation(self, newTranslation: np.ndarray):
-        self.mTranslation = newTranslation
-
-    def getWarpedSegmentation(self):
-        '''
-        Applies the selected component's current transform to its own segmentation image without any
-        other input from the other components.  Included for possible testing purposes later in the process.
-
-        :return: Returns an SITK Image containing the displaced segmentation.
-        '''
-        # todo Currently the displacement field is defined with affine matrices.  They need to be converted to vectors.
-        # todo Test this function to make sure it works.
-
-        transform = self.getAffineTransformMatrix()
-        if (type(self.mSegmentationImage) != sitk.SimpleITK.Image):
-            self.mSegmentationImage = sitk.GetImageFromArray(self.mSegmentationImage, False)
-        dimensions = list(self.mSegmentationImage.shape)
-        dimensions += [4,4]
-        temp = np.zeros(tuple(dimensions),dtype=np.float64)
-        temp[:,:] = transform
-        displacementField = sitk.GetImageFromArray(temp,isVector=True)
-        displacementField = sitk.DisplacementFieldTransform(displacementField)
-        return utils.resampleImage(self.mSegmentationImage,displacementField)
 
 class RigidComponentBatchConstructor():
     def __init__(self, dimensions: int, ratesOfDecay: list,
@@ -76,5 +69,6 @@ class RigidComponentBatchConstructor():
         self.mComponentList = []
 
         for idx in range(len(componentSegmentations)):
-            self.mComponentList.append(Component(dimensions=dimensions, segmentation=componentSegmentations[idx],
+            # todo Confirm that using an int as the label is the optimal choice
+            self.mComponentList.append(Component(label=idx, dimensions=dimensions, segmentation=componentSegmentations[idx],
                                                  rateOfDecay=ratesOfDecay[idx]))

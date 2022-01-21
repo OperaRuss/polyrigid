@@ -1,4 +1,5 @@
 import os
+import copy
 import numpy as np
 import matplotlib.pyplot as plt
 import SimpleITK as sitk
@@ -67,33 +68,60 @@ def saveNPimage_2D_BW(img: np.ndarray, fileName:str,outputFile: str="../images/r
     plt.axis('off')
     plt.savefig(os.path.join(outputFile,fileName), bbox_inches='tight')
 
-def makeHomogenous(point):
+def makeHomogeneous(array):
     '''
-    :param point: List of coordinates [X, Y, Z, etc]
-    :return: Same point but now in homogeneous coordinates.
+    :param point: List of coordinates [X, Y, Z, etc] or a multi-dimensional array
+    :return: Same point or matrix but now in homogeneous coordinates.
     '''
-    temp = []
-    if (type(point) == np.ndarray):
-        temp = point.tolist()
+    if not type(array) == np.ndarray:
+        temp = np.array(array,dtype=np.float64)
+    else:
+        temp = copy.deepcopy(array)
+    if len(temp.shape) == 1:
+        # If the length of the array is 1, it is a vector
+        temp = temp.tolist()
         temp.append(1)
         temp = np.array(temp)
     else:
-        temp = point
-        temp.append(1)
+        # If the length of the array is greater than 1, it is a matrix
+        if not all(x==temp.shape[0] for x in temp.shape):
+            print("Your matrix must be square.\nYou passed in:\n",array)
+            temp = None
+        else:
+            # the matrix is square, we add a zero to each row
+            zeros = np.zeros((temp.shape[-1],1),dtype=np.float64)
+            temp = np.concatenate((temp,zeros),axis=1)
+            homoRow = np.concatenate((np.zeros(temp.shape[0]),[1]),axis=0)
+            temp = np.vstack((temp,homoRow))
+    if not type(array) == np.ndarray:
+        temp = temp.tolist()
     return temp
 
-def makeCartesian(point):
+def decomposeHomographyMatrix(array):
     '''
+    This is the same function as 'make Cartesian' but with a name that implies what it does.
+    :param array: A square numpy.ndarray
+    :return: The Euclidean decomposition as a dictionary with keys { 'translation', 'rotation' }
+    '''
+    # Decompose the homogeneous array into a rotation matrix and a translation vector
+    divisor = array[-1,-1]
+    temp = np.divide(array, divisor)
+    translation = temp[:,-1]
+    translation = translation[:-1]
+    rotation = temp[:-1,:-1]
+    temp = {'translation': translation, 'rotation': rotation}
+    return temp
 
-    :param point: A point in homogeneous coordinate form.
-    :return: The same point but de-homogenized (in Cartesian coordinates).
-    '''
-    temp = []
-    if(type(point) == np.ndarray):
-        tempPoint = point.tolist()
-        temp = [x / tempPoint[-1] for x in tempPoint[:-1]]
+def makeCartesian(array):
+    if not type(array) == np.ndarray:
+        temp = np.array(array,dtype=np.float64)
     else:
-        temp = [x / point[-1] for x in point[:-1]]
+        temp = copy.deepcopy(array)
+    if len(temp.shape) == 1:
+        # Array is a vector and we can divide by the final element and exclude it
+        temp = [x / temp[-1] for x in temp[:-1]]
+    else:
+        temp = decomposeHomographyMatrix(array)
     return temp
 
 def getRadiansFromDegrees(degrees):
@@ -220,6 +248,8 @@ def resampleImage(image: sitk.SimpleITK.Image, transform):
     :param transform: A displacement field transform with the same dimensions as the image.
     :return: The input image under the provided displacement transform.
     '''
+    if type(image) != sitk.SimpleITK.Image:
+        image = sitk.GetImageFromArray(image, isVector=False)
     reference_image = image
     interpolator = sitk.sitkNearestNeighbor
     default_value = 0.0

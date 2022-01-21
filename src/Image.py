@@ -75,28 +75,39 @@ class WarpedImage(Image):
         '''
 
         Image.__init__(self,imageData,imageAffine,imageHeader,dimensions)
+        # todo Refactor container to make sure it works with the new dictionary structure
         self.mComponents = copy.deepcopy(imageComponents.mComponentList)
         self.setNormalizedComponentWeights()
 
     def setNormalizedComponentWeights(self):
-        segmentations = []
-        ratesOfDecay = []
-        normalizedWeights = []
+        segmentations = {}
+        ratesOfDecay = {}
+        normalizedWeights = {}
 
         for component in self.mComponents:
-            segmentations.append(component.mSegmentationImage)
-            ratesOfDecay.append(component.mRateOfDecay)
+            segmentations[component.getLabel()] = component.mSegmentationImage
+            ratesOfDecay[component.getLabel()] = component.mRateOfDecay
 
-        if self.mComponents[0].mDimensions == 2:
-            normalizedWeights = Weights.getNormalizedCommowickWeight(segmentations, ratesOfDecay, is3D=False)
+        if self.mDimensions == 2:
+            normalizedWeights = Weights.getNormalizedCommowickWeight(segmentations, ratesOfDecay)
         else:
-            normalizedWeights = Weights.getNormalizedCommowickWeight(segmentations, ratesOfDecay, is3D=True)
+            normalizedWeights = Weights.getNormalizedCommowickWeight(segmentations, ratesOfDecay)
 
         # ToDo Add branching for isotropic vs anisotropic gaussian images
         # ToDo Figure out how to do in 3D...
 
         for idx in range(len(self.mComponents)):
             self.mComponents[idx].mNormalizedWeightImage = normalizedWeights[idx]
+
+    def getComponentTransforms(self):
+        '''
+        Returns all component transforms at a given pixel from their current affine transformation matrices.
+        :return: Returns a square affine transformation matrix in a homogeneous coordinate system.
+        '''
+        componentTransforms = {}
+        for component in self.mComponents:
+            componentTransforms[component.getLabel()] = component.getAffineTransformMatrix()
+        return componentTransforms
 
     def getWeightsAtCoordinate(self, Xcoord: int, Ycoord: int, Zcoord=None):
         '''
@@ -107,13 +118,9 @@ class WarpedImage(Image):
         :param Zcoord: Depth coordinate of the voxel
         :return: A list of in-order component weights for the given pixel.
         '''
-        componentWeights = []
-        if len(self.mImage.shape) == 2:
-            for component in self.mComponents:
-                componentWeights.append(component.mNormalizedWeightImage[Xcoord][Ycoord])
-        else:
-            for component in self.mComponents:
-                componentWeights.append(component.mNormalizedWeightImage[Xcoord][Ycoord][Zcoord])
+        componentWeights = {}
+        for component in self.mComponents:
+            componentWeights[component.getLabel()] = component.getWeightAtCoordinate(Xcoord,Ycoord,Zcoord)
         return componentWeights
 
     def getWarpedImage(self):

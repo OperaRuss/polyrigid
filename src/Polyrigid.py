@@ -4,6 +4,10 @@ import Image
 import skimage
 import SimpleITK as sitk
 from scipy.linalg import logm, expm
+import numpy as np
+import utilities as utils
+
+
 
 class PolyrigidRegistrar():
     def __init__(self, movingImage: Image.WarpedImage, targetImage: Image.FixedImage,
@@ -70,25 +74,99 @@ class PolyrigidRegistrar():
         '''
         return expm(affineVelocityMatrix)
 
-    def getLEPT(self):
-        # todo Should the components store L & v vectors or R & t vectors
-        #  Is the sequence:
-        #       1) For each pixel,
-#                       for each component, fetch the current transform matrix
-        #       2)          For each component matrix, compute its logarithm
-        #       3)      Sum these logarithmic matrices by weight
-        #       4)      Exponentiate the summed matrix
-#                   we now have the 'new T' for that pixel
-#               5)  Warp image by new T vectors (by taking dot product with point vectors, etc)
-        #   OR is this the sequence:
-        #       1) For each pixel,
-        #               for each component,
-#                           fetch the stored VELOCITY matrix (all zeros on the bottom)
-        #       2)      Scale these by a factor of 2^N to be near identity
-        #       3)      Sum these together by weight
-        #       4)      Eponentiate the summed matrix
-        #       5)  We now have the 'new T' at each pixel, warp the image
-        pass
+    def getEmptyAffineTransformationImage(self, imageShape: tuple):
+        '''
+        :param imageShape: Tuple specifying a 2D or 3D image's dimensions
+        :return: Returns an empty array with the same dimensions as the image and affine matrices at each pixel.
+        '''
+        if len(imageShape) == 2:
+            imageShape = list(imageShape)
+            imageShape += [3,3]
+            imageShape = tuple(imageShape)
+            transformImage = np.zeros(imageShape, dtype=np.float64)
+        elif len(imageShape) == 3:
+            imageShape = list(imageShape)
+            imageShape += [4,4]
+            imageShape = tuple(imageShape)
+            transformImage = np.zeros(imageShape, dtype=np.float64)
+        else:
+            print("Error: Only 2D and 3D images are implemented for this program.")
+            transformImage = None
+        return transformImage
+
+    def getEmptyDisplacementField(self,imageShape:tuple):
+        '''
+        :param imageShape: Tuple specifying a 2D or 3D image's dimensions.
+        :return: Returns an empty vector field with 2D or 3D vectors at each pixel.
+        '''
+        if len(imageShape) == 2:
+            imageShape = list(imageShape)
+            imageShape += [2]
+            imageShape = tuple(imageShape)
+            displacementfield = np.zeros(imageShape, dtype=np.float64)
+        elif len(imageShape) == 3:
+            imageShape = list(imageShape)
+            imageShape += [3]
+            imageShape = tuple(imageShape)
+            displacementfield = np.zeros(imageShape, dtype=np.float64)
+        else:
+            print("Error: Only 2D and 3D images are implemented for this program.")
+            displacementfield = None
+        return displacementfield
+
+    def getLEPT(self, Xcoord: int, Ycoord: int, Zcoord: int=None):
+        '''
+        Function to return the composed log-Euclidean Polyaffine Transform matrix at a specific pixel location.
+        :return: A square affine transformation matrix in homogeneous coordinates.
+        '''
+        weights = self.mMovingImage.getWeightsAtCoordinate(Xcoord,Ycoord,Zcoord)
+        transforms = self.mMovingImage.getComponentTransforms()
+        logTransforms = {}
+
+        for component, transform in transforms:
+            logTransforms[component] = self.getMatrixLogarithm(transform)
+
+        compositeTransform = np.zeros(self.mMovingImage.mDimensions + 1, dtype=np.float64)
+
+        for component, weight in weights:
+            compositeTransform += weight * logTransforms[component]
+
+        return self.getMatrixExponential(compositeTransform)
+
+    def getDisplacementField(self):
+        imageShape = self.mMovingImage.mImage.shape
+        imageDimensions = self.mMovingImage.mDimensions
+        transformImage = self.getEmptyAffineTransformationImage(imageShape)
+        displacementField = self.getEmptyDisplacementField(imageShape)
+
+        # populate the composite affine vectors at each pixel
+        if imageDimensions == 2:
+            for row in range(imageShape[0]):
+                for col in range(imageShape[1]):
+                    transformImage[row,col] = self.getLEPT(row,col)
+
+            for row in range(imageShape[0]):
+                for col in range(imageShape[1]):
+                    point = utils.makeHomogeneous([row,col])
+                    newPoint = np.dot(transformImage[row,col],point)
+                    displacement = newPoint - point
+                    displacementField[row,col] = utils.makeCartesian(displacement)
+        else:
+            for row in range(imageShape[0]):
+                for col in range(imageShape[1]):
+                    for depth in range(imageShape[2]):
+                        transformImage[row,col,depth] = self.getLEPT(row,col,depth)
+
+            for row in range(imageShape[0]):
+                for col in range(imageShape[1]):
+                    for depth in range(imageShape[2]):
+                        point = utils.makeHomogeneous([row,col,depth])
+                        newPoint = np.dot(transformImage[row,col,depth],point)
+                        displacement = newPoint - point
+                        displacementField[row,col] = utils.makeCartesian(displacement)
+
+        return displacementField
+
 
     def register(self):
         '''
@@ -120,7 +198,11 @@ def testFunction():
     fixed = a.mTargetImage.mImage
     unwarped = a.mMovingImage.mImage
     warped = a.mMovingImage.getWarpedImage()
+    compWarp = a.mMovingImage.mComponents[0].getWarpedSegmentation()
     utils.showNDA_InEditor_BW(fixed, "Fixed Test Image")
     utils.showNDA_InEditor_BW(unwarped, "Moving Test Image, Unwarped")
     utils.showNDA_InEditor_BW(sitk.GetArrayFromImage(warped), "Moving Test Image, Warped")
+    utils.showNDA_InEditor_BW(sitk.GetArrayFromImage(compWarp), "Warped Segmentation")
     print(a.getMetric())
+
+testFunction()

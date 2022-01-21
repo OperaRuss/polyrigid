@@ -31,13 +31,13 @@ class PolyrigidRegistrar():
         self.displacementField = None
 
     def getMetric(self):
-        if not type(self.mMovingImage.mWarpedImage) == sitk.SimpleITK.Image:
-            movingImage = sitk.GetImageFromArray(self.mMovingImage.mWarpedImage, isVector=False)
+        if type(self.mMovingImage.mWarpedImage) == sitk.SimpleITK.Image:
+            movingImage = sitk.GetArrayFromImage(self.mMovingImage.mWarpedImage)
         else:
             movingImage = self.mMovingImage.mWarpedImage
 
-        if not type(self.mTargetImage.mImage) == sitk.SimpleITK.Image:
-            targetImage = sitk.GetImageFromArray(self.mTargetImage.mImage,isVector=False)
+        if type(self.mTargetImage.mImage) == sitk.SimpleITK.Image:
+            targetImage = sitk.GetArrayFromImage(self.mTargetImage.mImage)
         else:
             targetImage = self.mTargetImage.mImage
 
@@ -47,8 +47,8 @@ class PolyrigidRegistrar():
                                                                  bins=self.mMetricJHMIBins)
 
         elif(self.mMetric == 'RMSE'):
-            return skimage.metrics.normalized_root_mse(self.mMovingImage.getWarpedImage(),
-                                       self.mTargetImage,
+            return skimage.metrics.normalized_root_mse(movingImage,
+                                       targetImage,
                                        self.mMetricRMSENormalization)
         else:
             print("Only Joint Hisotram Mutual Information (tag: 'JHMI') and Root Mean Square Error " +
@@ -230,6 +230,6 @@ def testFunction():
     utils.showNDA_InEditor_BW(unwarped, "Moving Test Image, Unwarped")
     utils.showNDA_InEditor_BW(sitk.GetArrayFromImage(a.mMovingImage.mWarpedImage), "Moving Test Image, Warped")
     # utils.showNDA_InEditor_BW(sitk.GetArrayFromImage(compWarp), "Warped Segmentation")
-    # print(a.getMetric())
+    print(a.getMetric())
 
 testFunction()

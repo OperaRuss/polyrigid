@@ -1,0 +1,45 @@
+This is just a text file brain dump for while I'm working through how to set up this system in pytorch.
+
+The step I'm considering is the inital set up of the affine matrices at each pixel location in
+the image prior to computing the diplacement field.  We do this by weighting the component displacements
+by their respective per-pixel weights (as specified in the weight image).  The weights in this algorithm
+are fixed, the affine matrices are variable.  Most ML algorithms, the reverse is true.  We require a
+system which allows these matrices to be variable and also that the error can propagate to them individually.
+If one component moves very little, we do not want the major moves of another to cause it to move unnecessarily.
+
+We can frame the per-pixel weighting operation as a linear system:
+
+w1*T1 + w2*T2 + w3*T3 + ... + wn*Tn = T'
+
+Since this is a linear system, we can reframe it as a matrix equation.  Consider that each T matrix is a 4x4
+affine transformation matrix in homogeneous coordinates.  This means it has 16 values which each undergo
+scalar multiplication with their respective weight and then each matrix is added across to produce T'.
+
+Consider a_00 in T', the upper left element.  It is the sum of each weighted component of each matrix's a_00 component.
+If we line these up as a row in a matrix, we can multiply this row with a column vector of weights to produce the
+same result.  This pattern can continue for a_10 as well as a_11 up to a_44.  If we convert each affine matrix Tk
+into a column vector, joining them horizontally, and then take the dot product with the weight vector, we produce
+the resulting T' matrix with fewer multiplicatons.  We then reformat is 16 x 1 column vector into a 4x4 affine matrix,
+and store it as the transform at the given pixel.
+
+The benefit I see in this is in the retrieval operations required in assembling the new T' affine tensor. It only takes
+accessing the 8 T matrices once to create each round's 16 x 8 T matrix.  Then we re-populate the weights with every
+pixel call.  This is fewer access calls than if we perform scalar multiplication and then save it across.  Less memory too.
+
+Extending this thought, if we take a [16 x 8] matrix composed of this round's component transforms, we can take
+the matrix dot product of that tensor against an [8 x (m*n*p)] weight matrix where m, n and p are the dimensions
+of the weight image.  The result is a [16 x (m*n*p)] matrix with the composed affine transform at each pixel.
+
+Then, we apply the matrix exponential to the re-formatted 4x4 affine matrix.
+
+For each position, we compute the 'position shift' given the affine transform at that pixel, producing the displacement
+vector.
+
+This is provided to SimpleITK as a displacement field for the vectors as a whole.
+
+In pytorch lingo, our gradients are required for our input tensor (the 16 x 8 component tensor), at least.  Perhaps
+some things along the way as well.
+
+
+Now that I'm thinking about this, it may not be worth it to screw with the format.  I'm not sure how well
+the gradients can be transfered over these reformatting calls...

@@ -19,6 +19,7 @@ from pytorch3d import transforms
 # Custom Classes
 import utilities as utils
 import Weights
+import torchfields
 
 
 # STEP 1: Read in data
@@ -31,17 +32,20 @@ fixedData = sitk.GetArrayFromImage(fixedData)
 componentSegmentations = {}
 numComponents = 8
 imageDimensions = fixedData.shape
-imageWidth = imageDimensions[0]
-imageHeight = imageDimensions[1]
 if len(imageDimensions) == 3:
-    imageDepth = imageDimensions[2]
+    imageDepth = imageDimensions[0]
+    imageWidth = imageDimensions[1]
+    imageHeight = imageDimensions[2]
 else:
     imageDepth = 1
+    imageWidth = imageDimensions[0]
+    imageHeight = imageDimensions[1]
 
 for i in range(numComponents):
     temp = sitk.ReadImage("../images/segmentations/component"+str(i)+".nii")
     componentSegmentations[i] = sitk.GetArrayFromImage(temp)
 
+print("Importing Image Data.")
 movingImage = utils.normalizeImage(movingData)
 fixedImage = utils.normalizeImage(fixedData)
 for idx,img in componentSegmentations.items():
@@ -54,6 +58,7 @@ for idx, img in componentSegmentations.items():
     # utils.showNDA_InEditor_BW(img[10,:,:], "Component " + str(idx))
     componentWeights[idx] = 1/numComponents # assume for now that these are fixed gamma terms
 
+print("Normalizing Weights and Generating Weight Images.")
 # STEP 2: Calculate the Normalized Weight Volume
 weightImages = Weights.getNormalizedCommowickWeight(componentSegmentations,componentWeights)
 # for idx, img in weightImages.items():
@@ -72,6 +77,7 @@ def _augmentDimensions(imageDimensions: tuple, augmentation):
 
 dim = _augmentDimensions(imageDimensions,[numComponents])
 
+print("Composing Weight Volume")
 weightVolume = np.zeros(dim,dtype=np.float64)
 for idx in range(numComponents):
     weightImage = weightImages[idx]
@@ -83,6 +89,7 @@ for idx in range(numComponents):
 weightVolume = torch.tensor(data=weightVolume,dtype=torch.float64,requires_grad=False)
 weightVolume = torch.reshape(weightVolume,shape=(imageWidth*imageHeight*imageDepth, numComponents))
 
+print("Initializing Component Transforms.")
 # STEP 3: Initialize transform variables
 eye = torch.eye(4, dtype=torch.float64)
 eye = eye.reshape((1,4,4))
@@ -94,12 +101,14 @@ componentTransforms = torch.autograd.Variable(data=componentTransforms,requires_
 # [ R 0 ]
 # [ t 1 ]  If you put digits where the zero should be Pytorch3D throws an error.
 
+print("Entering Registration Loop.")
 # STEP 4: ENTER UPDATE LOOP
 stop_loss = 1e-5
 step_size = stop_loss / 3.0
-maxItrs = 10
+maxItrs = 1
 
 for i in range(maxItrs):
+    print("\tCalculating Logs Mappings and Fusing...")
     logMaps = transforms.se3_log_map(componentTransforms)
     # The se3 log map takes the form [ R 1 | t 1 ] a [1 ,6] row matrix
     # This function returns N = numComponents row matrices.
@@ -110,17 +119,19 @@ for i in range(maxItrs):
     LEPTImageVolume = torch.zeros(LEPTImageDimensions,dtype=torch.float64)
     LEPTImageVolume = LEPTImageVolume.reshape((imageHeight*imageWidth*imageDepth,4,4))
 
+    print("\tCalculating Exponential Mappings...")
     for i in range(imageWidth*imageHeight*imageDepth):
         LEPTImageVolume[i] = transforms.se3_exp_map(torch.reshape(fusedVectorLogs[i],(1,6)))
 
     LEPTImageVolume = LEPTImageVolume.reshape(LEPTImageDimensions)
 
+    print("\tCalculating Displacements...")
     displacementFieldDimensions = _augmentDimensions(imageDimensions,len(imageDimensions))
-    displacementField = torch.zeros(displacementFieldDimensions, dtype=torch.float64)
+    displacementField = torch.zeros(displacementFieldDimensions,dtype=torch.float64)
 
     if(len(imageDimensions) == 3):
         for depth in range(imageDimensions[0]):
-            print("Processing slice ",depth + 1," of ",imageWidth,".\n")
+            print("Processing slice ",depth + 1," of ",imageDepth,".")
             for row in range(imageDimensions[1]):
                 for col in range(imageDimensions[2]):
                     homogeneousPoint = torch.tensor([depth,row,col,1],dtype=torch.float64)
@@ -136,15 +147,27 @@ for i in range(maxItrs):
 # calculation back into the model.
 
 # TorchFields is a spacial warping package extending PyTorch for the express purpose of building
-# spatial transformer networks.  I am attempting to use their warp field datatype here for the
-# first time.  We will need to validate that this truly works in practice, but it may be the
-# best tool I've found so far.
+# spatial transformer networks.  Unfortunately, it has not been actively maintained for over 3
+# years, and the feature set constrains itself to vector fields in two dimensions.  After examining
+# their code, it appears that their warp field function (.sample()) is a warper around another
+# pytorch function, grid_sample().  Grid sample is extensible to '5D' images (N,C,H,W,D) where
+# N is the batch, C is the channels, and height, width, depth is the same.
 
-import torchfields
-movingImage = torch.tensor(movingImage,dtype=torch.float64)
-displacementField = torchfields.Field(displacementField)
-test = displacementField(movingImage)
-utils.showNDA_InEditor_BW(test[10,:,:])
+with torch.no_grad():
+    movingImage = sitk.GetImageFromArray(movingData)
+    displacementField = displacementField.detach().numpy()
+    disp = sitk.GetImageFromArray(displacementField.data)
+'''
+displacementField = sitk.GetImageFromArray(displacementField,isVector=True)
+displacementField = sitk.DisplacementFieldTransform(displacementField)
+movingImage = sitk.GetImageFromArray(movingImage.detach())
+reference_image = movingImage
+interpolator = sitk.sitkNearestNeighbor
+default_value = 0.0
+test = sitk.Resample(movingImage, reference_image, displacementField, interpolator, default_value)
+
+utils.showNDA_InEditor_BW(test[32,:,:], "Output after 1 round.")
+'''
 
 def register():
     # Issue of ordering:

@@ -14,13 +14,10 @@ Analysis (VIDA) research lab at New York University's Tandon School of Engineeri
 import SimpleITK as sitk
 import numpy as np
 import torch
-from pytorch3d import transforms
 
 # Custom Classes
 import utilities as utils
-import Weights
-import torchfields
-
+from src.old_code import Weights
 
 # STEP 1: Read in data
 movingData = sitk.ReadImage("../images/moving.nii")
@@ -46,8 +43,8 @@ for i in range(numComponents):
     componentSegmentations[i] = sitk.GetArrayFromImage(temp)
 
 print("Importing Image Data.")
-movingImage = utils.normalizeImage(movingData)
-fixedImage = utils.normalizeImage(fixedData)
+movingImage = torch.tensor(utils.normalizeImage(movingData),dtype=torch.float64)
+fixedImage = torch.tensor(utils.normalizeImage(fixedData),dtype=torch.float64)
 for idx,img in componentSegmentations.items():
     componentSegmentations[idx] = utils.normalizeImage(img)
 
@@ -60,7 +57,7 @@ for idx, img in componentSegmentations.items():
 
 print("Normalizing Weights and Generating Weight Images.")
 # STEP 2: Calculate the Normalized Weight Volume
-weightImages = Weights.getNormalizedCommowickWeight(componentSegmentations,componentWeights)
+weightImages = Weights.getNormalizedCommowickWeight(componentSegmentations, componentWeights)
 # for idx, img in weightImages.items():
     # utils.showNDA_InEditor_BW(img[10,:,:], "Weight Image for Component "+ str(idx))
 
@@ -91,15 +88,19 @@ weightVolume = torch.reshape(weightVolume,shape=(imageWidth*imageHeight*imageDep
 
 print("Initializing Component Transforms.")
 # STEP 3: Initialize transform variables
-eye = torch.eye(4, dtype=torch.float64)
+eye = torch.zeros((4,4), dtype=torch.float64) # zeros for [ L v ] matrix
 eye = eye.reshape((1,4,4))
 componentTransforms = eye.repeat(numComponents,1,1)
 componentTransforms = torch.autograd.Variable(data=componentTransforms,requires_grad=True)
-# I stole the above pattern off the internet somewhere not sure entirely why it works
-# NB: Pytorch3D uses row-ordinal matrices of format (batch, row, col)
-# This means the affine matrices are reversed from their col-ordinal position!
-# [ R 0 ]
-# [ t 1 ]  If you put digits where the zero should be Pytorch3D throws an error.
+# Begin by initializing 8 transform matrices in a batch, but do so _already in the log domain_.
+# This means the values are speed displacements (velocity vectors) and each transform is in the
+# general 4x4 form
+#       [ L v ]
+#       [ 0 0 ]
+# As defined in 2009, Arsigny, Fast Log-Euclidean Transforms.
+
+componentTransforms = torch.reshape(componentTransforms,(numComponents,16))
+# Linearize the transforms into an [N x 16] matrix for matrix multiplication.
 
 print("Entering Registration Loop.")
 # STEP 4: ENTER UPDATE LOOP
@@ -107,13 +108,12 @@ stop_loss = 1e-5
 step_size = stop_loss / 3.0
 maxItrs = 1
 
-for i in range(maxItrs):
-    print("\tCalculating Logs Mappings and Fusing...")
-    logMaps = transforms.se3_log_map(componentTransforms)
-    # The se3 log map takes the form [ R 1 | t 1 ] a [1 ,6] row matrix
-    # This function returns N = numComponents row matrices.
+S_d = np.linspace(-1,1,dim[0])
+S_w = np.linspace(-1,1,dim[1])
+S_h = np.linspace(-1,1,dim[2])
 
-    fusedVectorLogs = torch.matmul(weightVolume,logMaps)
+for i in range(maxItrs):
+    fusedVectorLogs = torch.matmul(weightVolume,componentTransforms)
 
     LEPTImageDimensions = _augmentDimensions(imageDimensions,[4,4])
     LEPTImageVolume = torch.zeros(LEPTImageDimensions,dtype=torch.float64)
@@ -121,24 +121,34 @@ for i in range(maxItrs):
 
     print("\tCalculating Exponential Mappings...")
     for i in range(imageWidth*imageHeight*imageDepth):
-        LEPTImageVolume[i] = transforms.se3_exp_map(torch.reshape(fusedVectorLogs[i],(1,6)))
+        LEPTImageVolume[i] = torch.matrix_exp(torch.reshape(fusedVectorLogs[i],(4,4)))
 
     LEPTImageVolume = LEPTImageVolume.reshape(LEPTImageDimensions)
+
+
+    print(LEPTImageVolume[0,0,0])
 
     print("\tCalculating Displacements...")
     displacementFieldDimensions = _augmentDimensions(imageDimensions,len(imageDimensions))
     displacementField = torch.zeros(displacementFieldDimensions,dtype=torch.float64)
 
+    normCoords = [[2.0 / dim[0], 0, 0, -((dim[0] - 1) / dim[0])],
+                  [0, 2.0 / dim[1], 0, -((dim[1] - 1) / dim[1])],
+                  [0, 0, 2.0 / dim[2], -((dim[2] - 1) / dim[2])],
+                  [0, 0, 0, 1]]
+    norm = torch.tensor(normCoords,dtype=torch.float64)
     if(len(imageDimensions) == 3):
         for depth in range(imageDimensions[0]):
             print("Processing slice ",depth + 1," of ",imageDepth,".")
             for row in range(imageDimensions[1]):
                 for col in range(imageDimensions[2]):
                     homogeneousPoint = torch.tensor([depth,row,col,1],dtype=torch.float64)
+                    homogeneousPoint = torch.matmul(norm,homogeneousPoint)
                     newPoint = torch.matmul(LEPTImageVolume[depth,row,col],homogeneousPoint)
                     newPoint = torch.divide(newPoint,newPoint[len(imageDimensions)])[:len(imageDimensions)]
                     oldPoint = homogeneousPoint[:len(imageDimensions)]
-                    displacementField[depth,row,col] = newPoint - oldPoint
+                    trajectory = oldPoint - newPoint
+                    displacementField[depth,row,col] = oldPoint + trajectory
 
 # STEP 5: Warp Image
 # Originally, we had discussed using SimpleITK.  There is an issue in that SimpleITK relies upon
@@ -153,22 +163,24 @@ for i in range(maxItrs):
 # pytorch function, grid_sample().  Grid sample is extensible to '5D' images (N,C,H,W,D) where
 # N is the batch, C is the channels, and height, width, depth is the same.
 
-with torch.no_grad():
-    movingImage = sitk.GetImageFromArray(movingData)
-    displacementField = displacementField.detach().numpy()
-    disp = sitk.GetImageFromArray(displacementField.data)
-'''
-displacementField = sitk.GetImageFromArray(displacementField,isVector=True)
-displacementField = sitk.DisplacementFieldTransform(displacementField)
-movingImage = sitk.GetImageFromArray(movingImage.detach())
-reference_image = movingImage
-interpolator = sitk.sitkNearestNeighbor
-default_value = 0.0
-test = sitk.Resample(movingImage, reference_image, displacementField, interpolator, default_value)
+displacementField = displacementField.unsqueeze(0)
 
-utils.showNDA_InEditor_BW(test[32,:,:], "Output after 1 round.")
-'''
+print(displacementField.max(),displacementField.min())
 
+import torch.nn.functional as F
+movingImage = movingImage.unsqueeze(0).unsqueeze(0)
+warped = F.grid_sample(movingImage,displacementField,mode='bilinear',padding_mode='zeros',align_corners=False)
+
+print("Calculating loss...")
+loss = F.mse_loss(warped.squeeze(),fixedImage)
+print("Loss: ",loss)
+print(componentTransforms.requires_grad)
+
+loss.backward()
+print("Component Gradient: ",componentTransforms.grad)
+
+
+'''
 def register():
     # Issue of ordering:
     # The order in which the weight masks are presented is the order in which the weights are assigned
@@ -207,3 +219,4 @@ def register():
     #   Updates Parameters
     # Returns N transformations estimated by the registrar algorithm
     pass
+'''

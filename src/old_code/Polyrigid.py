@@ -231,5 +231,3 @@ def testFunction():
     utils.showNDA_InEditor_BW(sitk.GetArrayFromImage(a.mMovingImage.mWarpedImage), "Moving Test Image, Warped")
     # utils.showNDA_InEditor_BW(sitk.GetArrayFromImage(compWarp), "Warped Segmentation")
     print(a.getMetric())
-
-testFunction()

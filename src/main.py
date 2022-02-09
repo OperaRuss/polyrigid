@@ -124,6 +124,7 @@ S_w = np.linspace(-1, 1, weightImageDimensions[1])
 S_h = np.linspace(-1, 1, weightImageDimensions[2])
 
 for itr in range(maxItrs):
+    print("Beginning iteration ",itr,".")
     fusedVectorLogs = torch.matmul(weightVolume,componentTransforms)
 
     LEPTImageVolume = torch.zeros(LEPTImageDimensions,dtype=torch.float64)
@@ -175,6 +176,11 @@ for itr in range(maxItrs):
     # Rotations in 3D would be [j,0:3,0:3] and translations [j,0:3,3]
     # Here we have to index them individually
     with torch.no_grad():
+        fig = plt.imshow(warped[0,0,imageDepth//2,:,:])
+        plt.axis('off')
+        plt.title("Warped Image at iteration "+str(itr))
+        plt.show()
+
         if itr % 2 == 0: # i is the iteration counter
             componentTransforms[:,0:3] -= torch.multiply(componentTransforms.grad[:,0:3],step_size)
             componentTransforms[:,4:7] -= torch.multiply(componentTransforms.grad[:,4:7],step_size)

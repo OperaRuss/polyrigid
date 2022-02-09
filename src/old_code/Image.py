@@ -2,7 +2,8 @@ import copy
 import SimpleITK as sitk
 import numpy as np
 import Component
-import Weights
+from src import Weights
+
 
 def loadNII(filePath: str):
     '''
@@ -155,7 +156,6 @@ class WarpedImage(Image):
 
 def testFunction():
     import Shape
-    import utilities as utils
 
     print("Constructing Images.")
     moving, fixed, components = Shape.testImages()

@@ -1,7 +1,5 @@
 import numpy as np
-import SimpleITK as sitk
-import utilities as utils
-import Weights
+
 
 class Component():
     def __init__(self,label, dimensions: int,rateOfDecay: float, segmentation: np.ndarray):

@@ -14,52 +14,12 @@ Analysis (VIDA) research lab at New York University's Tandon School of Engineeri
 import SimpleITK as sitk
 import numpy as np
 import torch
+import torch.nn.functional as F
+import matplotlib.pyplot as plt
 
 # Custom Classes
 import utilities as utils
-from src.old_code import Weights
-
-# STEP 1: Read in data
-movingData = sitk.ReadImage("../images/moving.nii")
-movingData = sitk.GetArrayFromImage(movingData)
-
-fixedData = sitk.ReadImage("../images/fixed.nii")
-fixedData = sitk.GetArrayFromImage(fixedData)
-
-componentSegmentations = {}
-numComponents = 8
-imageDimensions = fixedData.shape
-if len(imageDimensions) == 3:
-    imageDepth = imageDimensions[0]
-    imageWidth = imageDimensions[1]
-    imageHeight = imageDimensions[2]
-else:
-    imageDepth = 1
-    imageWidth = imageDimensions[0]
-    imageHeight = imageDimensions[1]
-
-for i in range(numComponents):
-    temp = sitk.ReadImage("../images/segmentations/component"+str(i)+".nii")
-    componentSegmentations[i] = sitk.GetArrayFromImage(temp)
-
-print("Importing Image Data.")
-movingImage = torch.tensor(utils.normalizeImage(movingData),dtype=torch.float64)
-fixedImage = torch.tensor(utils.normalizeImage(fixedData),dtype=torch.float64)
-for idx,img in componentSegmentations.items():
-    componentSegmentations[idx] = utils.normalizeImage(img)
-
-# utils.showNDA_InEditor_BW(movingData[10,:,:], "Moving Image")
-# utils.showNDA_InEditor_BW(fixedData[10,:,:], "Fixed Image")
-componentWeights = {}
-for idx, img in componentSegmentations.items():
-    # utils.showNDA_InEditor_BW(img[10,:,:], "Component " + str(idx))
-    componentWeights[idx] = 1/numComponents # assume for now that these are fixed gamma terms
-
-print("Normalizing Weights and Generating Weight Images.")
-# STEP 2: Calculate the Normalized Weight Volume
-weightImages = Weights.getNormalizedCommowickWeight(componentSegmentations, componentWeights)
-# for idx, img in weightImages.items():
-    # utils.showNDA_InEditor_BW(img[10,:,:], "Weight Image for Component "+ str(idx))
+from src import Weights
 
 def _augmentDimensions(imageDimensions: tuple, augmentation):
     temp = list(imageDimensions)
@@ -72,68 +32,112 @@ def _augmentDimensions(imageDimensions: tuple, augmentation):
         temp = temp + aug
     return tuple(temp)
 
-dim = _augmentDimensions(imageDimensions,[numComponents])
+# STEP 1: Read in data
+#   Our data comes in as .nii files pre-processed to reduce noise artifacts.
+#   The subject is assumed to be the same for all images in the dataset (ie, MR images
+#   of the same person).
+movingData = sitk.ReadImage("../images/moving.nii")
+movingData = sitk.GetArrayFromImage(movingData)
+movingImage = torch.tensor(utils.normalizeImage(movingData),dtype=torch.float64)
+movingImage = movingImage.unsqueeze(0).unsqueeze(0).permute((0, 1, 4, 3, 2))
+# The above permutation needs to be done in order for the data to be in the format
+# (Batch, Channels, Height, Width, Depth).  The moving image is only used in the
+# calculation of the error metric under the warping parameters of the estimated
+# displacement field.  This requires torch.grid_sample() which has a unique set of
+# input requirements.
 
-print("Composing Weight Volume")
-weightVolume = np.zeros(dim,dtype=np.float64)
+fixedData = sitk.ReadImage("../images/fixed.nii")
+fixedData = sitk.GetArrayFromImage(fixedData)
+fixedImage = torch.tensor(utils.normalizeImage(fixedData),dtype=torch.float64)
+
+# Common Variable & Dimension definitions
+numComponents = 8
+imageDimensions = fixedData.shape
+weightImageDimensions = _augmentDimensions(imageDimensions, [numComponents])
+LEPTImageDimensions = _augmentDimensions(imageDimensions, [4, 4])
+displacementFieldDimensions = _augmentDimensions(imageDimensions, len(imageDimensions))
+
+if len(imageDimensions) == 3:
+    imageDepth = imageDimensions[0]
+    imageWidth = imageDimensions[1]
+    imageHeight = imageDimensions[2]
+else:
+    imageDepth = 1
+    imageWidth = imageDimensions[0]
+    imageHeight = imageDimensions[1]
+
+# Step ) Construct the weight image
+componentSegmentations = {}
+
+for i in range(numComponents):
+    temp = sitk.ReadImage("../images/segmentations/component"+str(i)+".nii")
+    componentSegmentations[i] = sitk.GetArrayFromImage(temp)
+
+for idx,img in componentSegmentations.items():
+    componentSegmentations[idx] = utils.normalizeImage(img)
+
+componentWeights = {}
+for idx, img in componentSegmentations.items():
+    componentWeights[idx] = 1/numComponents # assume for now that these are fixed gamma terms
+
+# STEP 2: Calculate the Normalized Weight Volume
+weightImages = Weights.getNormalizedCommowickWeight(componentSegmentations, componentWeights)
+
+# The weight volume is a matrix of dimensions [h,w,d,8] where each channel is the normalized
+# weight image for one component. This is then reshaped into a [h*w*d,8] matrix for use in
+# an inner product operation.
+weightVolume = np.zeros(weightImageDimensions, dtype=np.float64)
 for idx in range(numComponents):
     weightImage = weightImages[idx]
     weightVolume[:,:,:,idx] = weightImage
 
-# utils.showNDA_InEditor_BW(weightImages[1][10,:,:],"Weight Image")
-# utils.showNDA_InEditor_BW(weightVolume[10,:,:,1], "Weight Volume Slice")
-
 weightVolume = torch.tensor(data=weightVolume,dtype=torch.float64,requires_grad=False)
 weightVolume = torch.reshape(weightVolume,shape=(imageWidth*imageHeight*imageDepth, numComponents))
 
-print("Initializing Component Transforms.")
 # STEP 3: Initialize transform variables
+# We are operating upon a static velocity field, where each point is assumed to operate
+# locally as in Euclidean space.  We begin by initializing each component transform to
+# the identity, which is a velocity of all zeros.  By taking the matrix exponential
+# of a [4x4] zero matrix, we obtain the identity matrix for Euclidean space.
+# This log-domain identity matrix is of the form [[ L v ], [000 1]] where
+# L = rotation and v = translation.
 eye = np.zeros((numComponents,4,4), dtype=np.float64) # zeros for [ L v ] matrix
 for i in range(numComponents):
     eye[i] = np.eye(4)
 eye = np.reshape(eye,(numComponents,16))
 eye = torch.tensor(eye, requires_grad=True)
 componentTransforms = torch.autograd.Variable(data=eye,requires_grad=True)
-componentTransforms.retain_grad() # Doesn't count as a leaf tensor?
-# Begin by initializing 8 transform matrices in a batch, but do so _already in the log domain_.
-# This means the values are speed displacements (velocity vectors) and each transform is in the
-# general 4x4 form
-#       [ L v ]
-#       [ 0 0 ]
-# As defined in 2009, Arsigny, Fast Log-Euclidean Transforms.
+componentTransforms.retain_grad()
 
-print("Entering Registration Loop.")
 # STEP 4: ENTER UPDATE LOOP
 stop_loss = 1e-5
-step_size = stop_loss / 3.0
-maxItrs = 1
+step_size = 1e-3
+maxItrs = 10
+update_rate = 1
+history = {}
 
 # Create a regular sample grid in three dimensions
-S_d = np.linspace(-1,1,dim[0])
-S_w = np.linspace(-1,1,dim[1])
-S_h = np.linspace(-1,1,dim[2])
+# Alternatively, we can normalize using a system of equations.  This is version pre-computes these values to save
+# some flops where we can.
+S_d = np.linspace(-1, 1, weightImageDimensions[0])
+S_w = np.linspace(-1, 1, weightImageDimensions[1])
+S_h = np.linspace(-1, 1, weightImageDimensions[2])
 
-for i in range(maxItrs):
+for itr in range(maxItrs):
     fusedVectorLogs = torch.matmul(weightVolume,componentTransforms)
 
-    LEPTImageDimensions = _augmentDimensions(imageDimensions,[4,4])
     LEPTImageVolume = torch.zeros(LEPTImageDimensions,dtype=torch.float64)
     LEPTImageVolume = LEPTImageVolume.reshape((imageHeight*imageWidth*imageDepth,4,4))
 
-    print("\tCalculating Exponential Mappings...")
     for i in range(imageWidth*imageHeight*imageDepth):
         LEPTImageVolume[i] = torch.matrix_exp(torch.reshape(fusedVectorLogs[i],(4,4)))
 
     LEPTImageVolume = LEPTImageVolume.reshape((20,64,64,4,4))
 
-    print("\tCalculating Displacements...")
-    displacementFieldDimensions = _augmentDimensions(imageDimensions,len(imageDimensions))
-    print(displacementFieldDimensions)
     displacementField = torch.zeros(displacementFieldDimensions,dtype=torch.float64)
 
 
     for depth in range(len(S_d)):
-        print("Processing slice ",depth + 1," of ",imageDepth,".")
         for row in range(len(S_h)):
             for col in range(len(S_w)):
                 homogeneousPoint = torch.tensor([S_d[depth],S_h[row],S_w[col],1],dtype=torch.float64)
@@ -143,70 +147,59 @@ for i in range(maxItrs):
                 displacement = oldPoint - newPoint
                 displacementField[depth,row,col] = oldPoint + displacement
 
-# STEP 5: Warp Image
-# Originally, we had discussed using SimpleITK.  There is an issue in that SimpleITK relies upon
-# numpy, and not pytorch, to calculate the displacement and loss.  This means that the gradient
-# propagation will be unhooked in the warping step and not able to propagate from the sitk loss
-# calculation back into the model.
+    # STEP 5: Warp Image
+    # Originally, we had discussed using SimpleITK.  There is an issue in that SimpleITK relies upon
+    # numpy, and not pytorch, to calculate the displacement and loss.  This means that the gradient
+    # propagation will be unhooked in the warping step and not able to propagate from the sitk loss
+    # calculation back into the model.
 
-# TorchFields is a spacial warping package extending PyTorch for the express purpose of building
-# spatial transformer networks.  Unfortunately, it has not been actively maintained for over 3
-# years, and the feature set constrains itself to vector fields in two dimensions.  After examining
-# their code, it appears that their warp field function (.sample()) is a warper around another
-# pytorch function, grid_sample().  Grid sample is extensible to '5D' images (N,C,H,W,D) where
-# N is the batch, C is the channels, and height, width, depth is the same.
+    # TorchFields is a spacial warping package extending PyTorch for the express purpose of building
+    # spatial transformer networks.  Unfortunately, it has not been actively maintained for over 3
+    # years, and the feature set constrains itself to vector fields in two dimensions.  After examining
+    # their code, it appears that their warp field function (.sample()) is a warper around another
+    # pytorch function, grid_sample().  Grid sample is extensible to '5D' images (N,C,H,W,D) where
+    # N is the batch, C is the channels, and height, width, depth is the same.
 
-displacementField = displacementField.unsqueeze(0)
+    displacementField = displacementField.unsqueeze(0)
 
-import torch.nn.functional as F
-movingImage = movingImage.unsqueeze(0).unsqueeze(0).permute((0,1,4,3,2)) # (Batch, Channels, Height, Width, Depth)
-warped = F.grid_sample(movingImage,displacementField,mode='nearest',padding_mode='zeros',align_corners=False)
+    warped = F.grid_sample(movingImage,displacementField,mode='bilinear',padding_mode='zeros',align_corners=False)
 
-print("Calculating loss...")
-loss = F.mse_loss(warped.squeeze(),fixedImage)
-print("Loss: ",loss)
+    loss = F.mse_loss(warped.squeeze(),fixedImage)
+    if itr % update_rate == 0:
+        print("Loss at iteration ",itr,": ",loss)
+        print("Component Transform",componentTransforms.data)
 
-loss.backward()
-print("Component Gradient: ",componentTransforms.grad)
+    loss.backward()
 
+    # Recall that our affine matrices have been flattened into an [Nx16] matrix
+    # Rotations in 3D would be [j,0:3,0:3] and translations [j,0:3,3]
+    # Here we have to index them individually
+    with torch.no_grad():
+        if itr % 2 == 0: # i is the iteration counter
+            componentTransforms[:,0:3] -= torch.multiply(componentTransforms.grad[:,0:3],step_size)
+            componentTransforms[:,4:7] -= torch.multiply(componentTransforms.grad[:,4:7],step_size)
+            componentTransforms[:,8:11] -= torch.multiply(componentTransforms.grad[:,8:11],step_size)
+        else:
+            # Update translations for each component
+            componentTransforms[:,3] -= torch.multiply(componentTransforms.grad[:,3],step_size)
+            componentTransforms[:,7] -= torch.multiply(componentTransforms.grad[:,7],step_size)
+            componentTransforms[:,11] -= torch.multiply(componentTransforms.grad[:,11],step_size)
+        componentTransforms.grad.zero_()
 
-'''
-def register():
-    # Issue of ordering:
-    # The order in which the weight masks are presented is the order in which the weights are assigned
-    # The order in which the weights are assigned is the order in which the transforms are adjusted
-    # The overall registration is agnostic to the position of the transforms (in terms of origin)
-    # We only require the correct number of transforms and the weight masks determine the local effect
+    history[itr] = loss
 
-    # Create Normalized Weight Image
-        # takes in N segmentation images
-        # outputs 1 weight image volume with dimensions HxWxDxN
+    if loss < stop_loss:
+        print("Model converged at iteration ",itr," with loss score ", loss)
+        print("Normalized final parameters were ",componentTransforms)
+        utils.showNDA_InEditor_BW(warped.detach().squeeze().numpy()[10,:,:],"Moving Image Result")
+        utils.showNDA_InEditor_BW(fixedImage.numpy()[10,:,:],"Fixed Image Target")
+        break
 
-    # Initialize Transforms
-    #       Set N 4x4 affine transforms to identity
-    #       These are autograd variables
+print("Congratulations, we did it!")
+print("Final loss achieved: ",loss)
 
-    # While loss > stop_loss & curr_itr < maxItrs:
-    # _getLogTransforms()
-    #   This is an N x 6 log mapping of the transform matrices
-    # _getWeightedTransform()
-    #   This takes the [N,6] log mapping matrix and HxWxDxN weight image
-    #   weights it at every pixel respective to weight image
-    #   Returns an HxWxDx6 matrix
-    # _getLEPTVolume()
-    #   Takes in the HxWxDx6 transform volume
-    #   Returns the HxWxDx4x4 affine transformation volume
-    # _getDisplacementField()
-    #   Applies the affine transformation to each coordinate point in the image space as a homogeneous coordinate
-    #   Returns the Cartesian vector (3x1) of displacement at each pixel
-    # _getWarpedImage()
-    #   Takes in the Warped Image and the Displacement Field and applies it to resample the image
-    #   Output is the warped image
-    # _update()
-    #   Takes in the fixed image and the warped image
-    #   Calculates and error metric
-    #   Propagates the error back through transforms
-    #   Updates Parameters
-    # Returns N transformations estimated by the registrar algorithm
-    pass
-'''
+data = sorted(history.items())
+x,y = zip(*data)
+plt.plot(x,y)
+plt.title("MSE Loss by Iterations")
+plt.show()

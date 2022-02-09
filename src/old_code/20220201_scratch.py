@@ -1,9 +1,7 @@
 import copy
 
-import numpy
 import pytorch3d.transforms
 
-import Polyrigid
 import numpy as np
 import utilities as utils
 
@@ -326,7 +324,6 @@ def tfTestFunc():
     print(A)
 
 def torch3Dtest():
-    import torchvision as tv
     import torch
     from pytorch3d import transforms
     import torch.nn
@@ -507,11 +504,10 @@ def pytorch_v1():
     import numpy as np
     import torch
     from pytorch3d import transforms
-    import torch.nn.functional as F
 
     # Custom Classes
     import utilities as utils
-    import Weights
+    from src import Weights
 
     # STEP 1: Read in data
     movingData = sitk.ReadImage("../images/moving.nii")

@@ -4,18 +4,20 @@ import numpy as np
 import matplotlib.pyplot as plt
 import SimpleITK as sitk
 
-def showNDA_InEditor_BW(img: np.ndarray, title: str=""):
+def showNDA_InEditor_BW(img: np.ndarray, title: str="",saveName: str=None):
     '''
     Basic 'show' function for a numpy type array.
 
     :param img: 2- or 3-dimensional numpy array.
     :param title: If you want to label the image, include a string.
+    :param saveName: If provided, will save the image under the given filename in ../images/results/
     :return:
     '''
     try:
         plt.imshow(img, cmap='gray')
         plt.title(title)
         plt.axis('off')
+        plt.savefig("../images/results/"+saveName,bbox_inches='tight')
         plt.show()
     except:
         if len(img.shape) != 2:

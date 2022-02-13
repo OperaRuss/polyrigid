@@ -32,25 +32,6 @@ def _augmentDimensions(imageDimensions: tuple, augmentation):
         temp = temp + aug
     return tuple(temp)
 
-# STEP 1: Read in data
-#   Our data comes in as .nii files pre-processed to reduce noise artifacts.
-#   The subject is assumed to be the same for all images in the dataset (ie, MR images
-#   of the same person).
-movingData = sitk.ReadImage("../images/moving.nii")
-movingData = sitk.GetArrayFromImage(movingData)
-movingImage = torch.tensor(utils.normalizeImage(movingData),dtype=torch.float64)
-movingImage = movingImage.permute(2,1,0).unsqueeze(0).unsqueeze(0).cuda()
-# The above permutation needs to be done in order for the data to be in the format
-# (Batch, Channels, Height, Width, Depth).  The moving image is only used in the
-# calculation of the error metric under the warping parameters of the estimated
-# displacement field.  This requires torch.grid_sample() which has a unique set of
-# input requirements.
-
-fixedData = sitk.ReadImage("../images/fixed.nii")
-fixedData = sitk.GetArrayFromImage(fixedData)
-fixedImage = torch.tensor(utils.normalizeImage(fixedData),dtype=torch.float64)
-fixedImage = fixedImage.unsqueeze(0).unsqueeze(0).cuda()
-
 def NCC(fixed, moving, windowDimensions: int=9):
     Ii = fixed
     Ji = moving
@@ -99,11 +80,33 @@ def NCC(fixed, moving, windowDimensions: int=9):
 
     return -torch.mean(cc)
 
+
+# STEP 1: Read in data
+#   Our data comes in as .nii files pre-processed to reduce noise artifacts.
+#   The subject is assumed to be the same for all images in the dataset (ie, MR images
+#   of the same person).
+movingData = sitk.ReadImage("../images/moving_2D.nii")
+movingData = sitk.GetArrayFromImage(movingData)
+
+fixedData = sitk.ReadImage("../images/fixed_2D.nii")
+fixedData = sitk.GetArrayFromImage(fixedData)
+
+movingImage = torch.tensor(utils.normalizeImage(movingData),dtype=torch.float64)
+movingImage = movingImage.unsqueeze(0).unsqueeze(0).cuda()
+# The above permutation needs to be done in order for the data to be in the format
+# (Batch, Channels, Height, Width, Depth).  The moving image is only used in the
+# calculation of the error metric under the warping parameters of the estimated
+# displacement field.  This requires torch.grid_sample() which has a unique set of
+# input requirements.
+
+fixedImage = torch.tensor(utils.normalizeImage(fixedData),dtype=torch.float64)
+fixedImage = fixedImage.unsqueeze(0).unsqueeze(0).cuda()
+
 # Common Variable & Dimension definitions
 numComponents = 8
 imageDimensions = fixedData.shape
 weightImageDimensions = _augmentDimensions(imageDimensions, [numComponents])
-LEPTImageDimensions_affine = _augmentDimensions(imageDimensions, [4, 4])
+LEPTImageDimensions_affine = _augmentDimensions(imageDimensions, [len(imageDimensions)+1, len(imageDimensions)+1])
 displacementFieldDimensions = _augmentDimensions(imageDimensions, len(imageDimensions))
 
 if len(imageDimensions) == 3:
@@ -115,13 +118,13 @@ else:
     imageWidth = imageDimensions[0]
     imageHeight = imageDimensions[1]
 
-LEPTImageDimensions_linear = (imageWidth * imageHeight * imageDepth,4,4)
+LEPTImageDimensions_linear = (imageWidth * imageHeight * imageDepth,len(imageDimensions)+1,len(imageDimensions)+1)
 
 # Step ) Construct the weight image
 componentSegmentations = {}
 
 for i in range(numComponents):
-    temp = sitk.ReadImage("../images/segmentations/component"+str(i)+".nii")
+    temp = sitk.ReadImage("../images/segmentations/component"+str(i)+"_2D.nii")
     componentSegmentations[i] = sitk.GetArrayFromImage(temp)
 
 for idx,img in componentSegmentations.items():
@@ -140,7 +143,10 @@ weightImages = Weights.getNormalizedCommowickWeight(componentSegmentations, comp
 weightVolume = np.zeros(weightImageDimensions, dtype=np.float64)
 for idx in range(numComponents):
     weightImage = weightImages[idx]
-    weightVolume[:,:,:,idx] = weightImage
+    if len(imageDimensions) == 5:
+        weightVolume[:,:,:,idx] = weightImage
+    else:
+        weightVolume[:,:,idx] = weightImage
 
 weightVolume = torch.tensor(data=weightVolume,dtype=torch.float64,requires_grad=False).cuda()
 weightVolume = torch.reshape(weightVolume,shape=(imageWidth*imageHeight*imageDepth, numComponents))
@@ -152,8 +158,8 @@ weightVolume = torch.reshape(weightVolume,shape=(imageWidth*imageHeight*imageDep
 # of a [4x4] zero matrix, we obtain the identity matrix for Euclidean space.
 # This log-domain identity matrix is of the form [[ L v ], [000 1]] where
 # L = rotation and v = translation.
-eye = np.zeros((numComponents,4,4), dtype=np.float64) # zeros for [ L v ] matrix
-eye = np.reshape(eye,(numComponents,16))
+eye = np.zeros((numComponents,len(imageDimensions)+1,len(imageDimensions)+1), dtype=np.float64) # zeros for [ L v ] matrix
+eye = np.reshape(eye,(numComponents, (len(imageDimensions)+1) ** 2))
 eye = torch.tensor(eye, requires_grad=True)
 componentTransforms = torch.autograd.Variable(data=eye,requires_grad=True).cuda()
 componentTransforms.retain_grad()
@@ -161,39 +167,52 @@ componentTransforms.retain_grad()
 # STEP 4: ENTER UPDATE LOOP
 stop_loss = 1e-5
 step_size = 1e-3
-maxItrs = 10*100
+maxItrs = 2500
 update_rate = 1
 history = {}
 
 # Create a regular sample grid in three dimensions
 # Alternatively, we can normalize using a system of equations.  This is version pre-computes these values to save
 # some flops where we can.
-S_d = np.linspace(-1, 1, weightImageDimensions[0])
-S_w = np.linspace(-1, 1, weightImageDimensions[1])
-S_h = np.linspace(-1, 1, weightImageDimensions[2])
+if len(imageDimensions) == 3:
+    S_d = np.linspace(-1, 1, imageDimensions[0])
+    S_w = np.linspace(-1, 1, imageDimensions[1])
+    S_h = np.linspace(-1, 1, imageDimensions[2])
+else:
+    S_w = np.linspace(-1,1,imageDimensions[0])
+    S_h = np.linspace(-1,1,imageDimensions[1])
 
 for itr in range(maxItrs):
-    print("Beginning iteration ",itr,".")
+    print("Beginning iteration ",itr)
     fusedVectorLogs = torch.matmul(weightVolume,componentTransforms)
 
-    LEPTImageVolume = torch.zeros(LEPTImageDimensions_linear,dtype=torch.float64)
+    LEPTImageVolume = torch.zeros(LEPTImageDimensions_linear,dtype=torch.float64).cuda()
 
     for i in range(imageWidth*imageHeight*imageDepth):
-        LEPTImageVolume[i] = torch.matrix_exp(torch.reshape(fusedVectorLogs[i],(4,4)))
+        LEPTImageVolume[i] = torch.matrix_exp(torch.reshape(fusedVectorLogs[i],(len(imageDimensions)+1,len(imageDimensions)+1)))
 
     LEPTImageVolume = LEPTImageVolume.reshape(LEPTImageDimensions_affine)
 
-    displacementField = torch.zeros(displacementFieldDimensions,dtype=torch.float64)
-
-    for depth in range(len(S_d)):
+    displacementField = torch.zeros(displacementFieldDimensions,dtype=torch.float64).cuda()
+    if len(imageDimensions) == 3:
+        for depth in range(len(S_d)):
+            for row in range(len(S_h)):
+                for col in range(len(S_w)):
+                    homogeneousPoint = torch.tensor([S_d[depth],S_h[row],S_w[col],1],dtype=torch.float64)
+                    newPoint = torch.matmul(LEPTImageVolume[depth,row,col],homogeneousPoint)
+                    newPoint = torch.divide(newPoint,newPoint[len(imageDimensions)])[:len(imageDimensions)]
+                    oldPoint = homogeneousPoint[:len(imageDimensions)]
+                    displacement = oldPoint - newPoint
+                    displacementField[depth,row,col] = oldPoint + displacement
+    else:
         for row in range(len(S_h)):
             for col in range(len(S_w)):
-                homogeneousPoint = torch.tensor([S_d[depth],S_h[row],S_w[col],1],dtype=torch.float64)
-                newPoint = torch.matmul(LEPTImageVolume[depth,row,col],homogeneousPoint)
+                homogeneousPoint = torch.tensor([S_h[col],S_w[row],1],dtype=torch.float64).cuda()
+                newPoint = torch.matmul(LEPTImageVolume[col,row],homogeneousPoint)
                 newPoint = torch.divide(newPoint,newPoint[len(imageDimensions)])[:len(imageDimensions)]
                 oldPoint = homogeneousPoint[:len(imageDimensions)]
                 displacement = oldPoint - newPoint
-                displacementField[depth,row,col] = oldPoint + displacement
+                displacementField[row,col] = oldPoint + displacement
 
     # STEP 5: Warp Image
     # Originally, we had discussed using SimpleITK.  There is an issue in that SimpleITK relies upon
@@ -221,20 +240,28 @@ for itr in range(maxItrs):
     # Rotations in 3D would be [j,0:3,0:3] and translations [j,0:3,3]
     # Here we have to index them individually
     with torch.no_grad():
-        if itr % 2 == 0: # i is the iteration counter
-            componentTransforms[:,0:3] -= torch.multiply(componentTransforms.grad[:,0:3],step_size)
-            componentTransforms[:,4:7] -= torch.multiply(componentTransforms.grad[:,4:7],step_size)
-            componentTransforms[:,8:11] -= torch.multiply(componentTransforms.grad[:,8:11],step_size)
+        if len(imageDimensions) == 3:
+            if itr % 2 == 0: # i is the iteration counter
+                componentTransforms[:,0:3] -= torch.multiply(componentTransforms.grad[:,0:3],step_size)
+                componentTransforms[:,4:7] -= torch.multiply(componentTransforms.grad[:,4:7],step_size)
+                componentTransforms[:,8:11] -= torch.multiply(componentTransforms.grad[:,8:11],step_size)
+            else:
+                # Update translations for each component
+                componentTransforms[:,3] -= torch.multiply(componentTransforms.grad[:,3],step_size)
+                componentTransforms[:,7] -= torch.multiply(componentTransforms.grad[:,7],step_size)
+                componentTransforms[:,11] -= torch.multiply(componentTransforms.grad[:,11],step_size)
         else:
-            # Update translations for each component
-            componentTransforms[:,3] -= torch.multiply(componentTransforms.grad[:,3],step_size)
-            componentTransforms[:,7] -= torch.multiply(componentTransforms.grad[:,7],step_size)
-            componentTransforms[:,11] -= torch.multiply(componentTransforms.grad[:,11],step_size)
+            if itr % 2 == 0: #rotation update
+                componentTransforms[:, 0:2] -= torch.multiply(componentTransforms.grad[:, 0:2], step_size)
+                componentTransforms[:, 3:5] -= torch.multiply(componentTransforms.grad[:, 3:5], step_size)
+            else: #translation update
+                componentTransforms[:,2] -= torch.multiply(componentTransforms.grad[:,2],step_size)
+                componentTransforms[:,5] -= torch.multiply(componentTransforms.grad[:,5],step_size)
         componentTransforms.grad.zero_()
 
-    history[itr] = loss
+    history[itr] = loss.item()
 
-    if abs(loss) < stop_loss:
+    if 1.0 - abs(loss) < stop_loss:
         print("Model converged at iteration ",itr," with loss score ", loss)
         print("Normalized final parameters were ",componentTransforms)
         utils.showNDA_InEditor_BW(warpedImage.detach().squeeze().cpu().numpy()[10,:,:],"Moving Image Result","final")
@@ -249,11 +276,18 @@ print("Final parameter data:")
 
 for i in range(numComponents):
     print("Component transformation "+str(i))
-    print(torch.matrix_exp(torch.reshape(componentTransforms[i],[4,4])))
+    print(torch.matrix_exp(torch.reshape(componentTransforms[i],[len(imageDimensions)+1,len(imageDimensions)+1])))
+
+utils.showNDA_InEditor_BW(movingImage.detach().squeeze().cpu().numpy(),"Moving Image")
+utils.showNDA_InEditor_BW(warpedImage.detach().squeeze().cpu().numpy(),"Warped Image")
+utils.showNDA_InEditor_BW(fixedImage.detach().squeeze().cpu().numpy(),"Target Image")
+sub = torch.subtract(fixedImage,warpedImage).squeeze().cpu()
+utils.showNDA_InEditor_BW(sub.detach().squeeze().numpy(),"Target Image Less Warped Image")
 
 data = sorted(history.items())
 x,y = zip(*data)
-fig = plt.plot(x,y.cpu())
-plt.title("MSE Loss by Iterations")
+fig = plt.plot(x,y,marker =".",markersize=10)
+plt.title("NCC Loss by Iterations")
 plt.show()
+
 

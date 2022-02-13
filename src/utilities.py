@@ -17,7 +17,6 @@ def showNDA_InEditor_BW(img: np.ndarray, title: str="",saveName: str=None):
         plt.imshow(img, cmap='gray')
         plt.title(title)
         plt.axis('off')
-        plt.savefig("../images/results/"+saveName,bbox_inches='tight')
         plt.show()
     except:
         if len(img.shape) != 2:

@@ -256,3 +256,42 @@ def resampleImage(image: sitk.SimpleITK.Image, transform):
     interpolator = sitk.sitkNearestNeighbor
     default_value = 0.0
     return sitk.Resample(image, reference_image, transform, interpolator, default_value)
+
+def getSlicesFromNifty3D(inputFilePath, outputFilePath):
+    import SimpleITK as sitk
+
+    img = sitk.ReadImage(inputFilePath)
+    data = sitk.GetArrayFromImage(img)
+    data = normalizeImage(data)
+    data = normalizeForImageOutput(data)
+
+    slices = {}
+
+    for i in range(data.shape[0]):
+        slices['slice_'+str(i)] = data[i,:,:]
+
+    for k,v in slices.items():
+        temp = sitk.GetImageFromArray(v,isVector=False)
+        sitk.WriteImage(temp,outputFilePath+k+".png")
+
+def getFramesFromNifty14D(inputFilePath, outputFilePath):
+    import nibabel as nib
+
+    img = nib.load(inputFilePath)
+    affine = img.affine
+    hdr = img.header
+    hdr['dim'][0] = 3
+    hdr['dim'][4] = 1
+    data = img.get_fdata()
+
+    frames = {}
+
+    for i in range(img.shape[3]):
+        frames['frame_'+str(i)] = data[:,:,:,i]
+
+    for k,v in frames.items():
+        temp = nib.Nifti1Image(v,affine=affine,header=hdr)
+        nib.save(temp,outputFilePath + k + ".nii")
+
+for i in range(20):
+    getSlicesFromNifty3D(r"C:\Users\russe\github\polyrigid\images\data\202202_live\sequence\frame_"+str(i)+".nii",r"C:\Users\russe\github\polyrigid\images\data\202202_live\slices\frame_"+str(i)+r"\\")

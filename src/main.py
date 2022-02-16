@@ -85,10 +85,10 @@ def NCC(fixed, moving, windowDimensions: int=9):
 #   Our data comes in as .nii files pre-processed to reduce noise artifacts.
 #   The subject is assumed to be the same for all images in the dataset (ie, MR images
 #   of the same person).
-movingData = sitk.ReadImage("../images/moving_2D.nii")
+movingData = sitk.ReadImage("../images/development/moving_2D.nii")
 movingData = sitk.GetArrayFromImage(movingData)
 
-fixedData = sitk.ReadImage("../images/fixed_2D.nii")
+fixedData = sitk.ReadImage("../images/development/fixed_2D.nii")
 fixedData = sitk.GetArrayFromImage(fixedData)
 
 movingImage = torch.tensor(utils.normalizeImage(movingData),dtype=torch.float64)

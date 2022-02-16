@@ -3,6 +3,8 @@ import copy
 import numpy as np
 import matplotlib.pyplot as plt
 import SimpleITK as sitk
+import nibabel as nib
+
 
 def showNDA_InEditor_BW(img: np.ndarray, title: str="",saveName: str=None):
     '''
@@ -258,8 +260,6 @@ def resampleImage(image: sitk.SimpleITK.Image, transform):
     return sitk.Resample(image, reference_image, transform, interpolator, default_value)
 
 def getSlicesFromNifty3D(inputFilePath, outputFilePath):
-    import SimpleITK as sitk
-
     img = sitk.ReadImage(inputFilePath)
     data = sitk.GetArrayFromImage(img)
     data = normalizeImage(data)
@@ -275,8 +275,6 @@ def getSlicesFromNifty3D(inputFilePath, outputFilePath):
         sitk.WriteImage(temp,outputFilePath+k+".png")
 
 def getFramesFromNifty14D(inputFilePath, outputFilePath):
-    import nibabel as nib
-
     img = nib.load(inputFilePath)
     affine = img.affine
     hdr = img.header

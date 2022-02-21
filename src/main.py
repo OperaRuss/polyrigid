@@ -30,11 +30,11 @@ vWeightImageDimensions = utils._augmentDimensions(vImageDimensions, [vNumCompone
 vLEPTImageDimensions_affine = utils._augmentDimensions(vImageDimensions, [vNDims + 1, vNDims + 1])
 vLEPTImageDimensions_linear = (np.prod(vImageDimensions),vNDims + 1,vNDims + 1)
 vDisplacementFieldDimensions = (*vImageDimensions[2:],vNDims)
-vSamplePoints_Depth = torch.linspace(-1,1,steps=vImageDimensions[2])
-vSamplePoints_Height = torch.linspace(-1,1,steps=vImageDimensions[3])
-vSamplePoints_Width = torch.linspace(-1,1,steps=vImageDimensions[4])
+tSamplePoints_Depth = torch.linspace(-1, 1, steps=vImageDimensions[2])
+tSamplePoints_Height = torch.linspace(-1, 1, steps=vImageDimensions[3])
+tSamplePoints_Width = torch.linspace(-1, 1, steps=vImageDimensions[4])
 
-tSamplePoints = torch.cartesian_prod(vSamplePoints_Depth,vSamplePoints_Height,vSamplePoints_Width)
+tSamplePoints = torch.cartesian_prod(tSamplePoints_Depth,tSamplePoints_Height, tSamplePoints_Width)
 tOnes = torch.ones(np.prod(vImageDimensions),dtype=torch.float32)
 tSamplePoints = torch.cat((tSamplePoints,tOnes.unsqueeze(-1)),dim=1).cuda()
 
@@ -42,14 +42,15 @@ tTransform = torch.matmul(tSamplePoints,torch.eye(4).cuda())
 
 tDisplacementField = torch.div(tTransform,tTransform[:,vNDims,None])[:,:vNDims]
 tDisplacementField = torch.reshape(tDisplacementField,vDisplacementFieldDimensions).unsqueeze(0)
+tDisplacementField = tDisplacementField
 
 tImgWarped = F.grid_sample(tImgMoving,tDisplacementField,mode='bilinear',padding_mode='zeros',align_corners=False)
 tImgFixed = F.grid_sample(tImgTarget,tDisplacementField,mode='bilinear',padding_mode='zeros',align_corners=False)
 
-plt.imshow(tImgWarped.cpu().numpy()[0,0,vImageDimensions[2]//2,:,:])
+plt.imshow(tImgWarped.cpu().numpy()[0,0,vImageDimensions[2]//2,:,:],cmap='gray')
 plt.title("Warped Image")
 plt.show()
 
-plt.imshow(tImgFixed.cpu().numpy()[0,0,vImageDimensions[2]//2,:,:])
+plt.imshow(tImgFixed.cpu().numpy()[0,0,vImageDimensions[2]//2,:,:],cmap='gray')
 plt.title("Fixed Image")
 plt.show()

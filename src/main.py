@@ -13,7 +13,7 @@ import utilities as utils
 
 vStop_Loss = 1e-5
 vStep_Size = 1e-3
-vMaxItrs = 2500
+vMaxItrs = 10
 vUpdate_Rate = 1
 vHistory = {}
 vNumComponents = 12
@@ -114,13 +114,29 @@ for itr in range(vMaxItrs):
                 tComponentTransforms[:, 5] -= torch.multiply(tComponentTransforms.grad[:, 5], vStep_Size)
         tComponentTransforms.grad.zero_()
 
+    vHistory[itr] = loss.item()
 
-plt.imshow(tImgWarped.detach().squeeze().cpu().numpy()[60,:,:],cmap='gray')
-plt.axis('off')
-plt.title("Warped Image")
+    if 1.0 - abs(loss) < vStop_Loss:
+        print("Model converged at iteration ", itr, " with loss score ", loss)
+        print("Normalized final parameters were ", torch.matrix_exp(tComponentTransforms))
+        utils.showNDA_InEditor_BW(tImgWarped.detach().squeeze().cpu().numpy()[60, :, :], "Moving Image Result",
+                                  "final")
+        utils.showNDA_InEditor_BW(tImgTarget.squeeze().cpu().numpy()[60, :, :], "Fixed Image Target")
+
+        sub = torch.subtract(tImgTarget, tImgWarped).squeeze().cpu()
+        utils.showNDA_InEditor_BW(sub.detach().squeeze().numpy()[10, :, :], "Subtraction Image, Target - Warped")
+        break
+
+print("Final loss achieved: ",loss)
+print("Final parameter data:")
+
+for i in range(vNumComponents):
+    print("Component transformation "+str(i))
+    print(torch.matrix_exp(torch.reshape(tComponentTransforms[i],[vNDims+1,vNDims+1])))
+
+data = sorted(vHistory.items())
+x,y = zip(*data)
+fig = plt.plot(x,y,marker =".",markersize=10)
+plt.title("NCC Loss by Iterations")
 plt.show()
 
-plt.imshow(tImgTarget.detach().squeeze().cpu().numpy()[60,:,:],cmap='gray')
-plt.axis('off')
-plt.title("Target Image")
-plt.show()

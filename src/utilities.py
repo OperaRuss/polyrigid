@@ -1,6 +1,8 @@
 import nibabel as nib
 import numpy as np
 import torch
+import torch.nn.functional as F
+from scipy import ndimage
 
 def getFramesFromNifty14D(inputFilePath, outputFilePath):
     img = nib.load(inputFilePath)
@@ -30,7 +32,7 @@ def normalizeImage(img: np.ndarray):
     temp = np.divide(temp, (max - min))
     return temp
 
-def _metricNCC(moving,target, windowWidth: int=9):
+def _getMetricNCC(moving,target, windowWidth: int=9):
     ndims = len(moving.shape) - 2
     assert ndims in [1, 2, 3], "volumes should be 1 to 3 dimensions. found: %d" % ndims
     window = [windowWidth] * ndims
@@ -69,7 +71,7 @@ def _metricNCC(moving,target, windowWidth: int=9):
     cc = cross_coef * cross_coef / (var_M * var_T + 1e-5)
     return torch.mean(cc)
 
-def _metricMSE(moving, target):
+def _getMetricMSE(moving, target):
     se = torch.subtract(moving,target)
     se = torch.pow(se,2.0)
     return torch.mean(se)
@@ -84,3 +86,55 @@ def _augmentDimensions(imageDimensions: tuple, augmentation):
         aug = list(augmentation)
         temp = temp + aug
     return tuple(temp)
+
+def _getDistanceToCompoonentRegion(componentSegmentation: np.ndarray):
+    '''
+    :param componentSegmentation: Binary image with foreground values as objects and all else as background.
+    :return: Returns the exact Euclidean distance from a background pixel to the nearest foreground pixel.
+    '''
+    maxIntensity = np.max(componentSegmentation)
+    invertedImage = np.subtract(maxIntensity, componentSegmentation)
+    return ndimage.distance_transform_edt(invertedImage)
+
+def _getRegionWeight(componentSegmentation: np.ndarray, gamma: float):
+    '''
+    :param componentSegmentation: Binary label image of a single component from the image.
+    :param gamma: The relative weight assigned to this component.
+    :return: Returns an imgae containing a diffusion of influence over the image space relative to the object.
+    '''
+    return (1.0 / (1.0 + (gamma * pow(_getDistanceToCompoonentRegion(componentSegmentation), 2))))
+
+
+def _getWeightCommowick(componentSegmentations: dict, ratesOfDecay: dict):
+    '''
+    :param componentSegmentations: Dictionary of binary images for component regions
+    :param ratesOfDecay: Dictionary of {label:weight} pairs where label = component segmentation label
+    :return: Dictionary of normalized weight images summing to 1.0 at each voxel
+    '''
+    vCommowickWeights = {}
+    for label, segmentation in componentSegmentations.items():
+        vCommowickWeights[label] = _getRegionWeight(segmentation, ratesOfDecay[label])
+    vSumImage = np.zeros(componentSegmentations[0].shape,dtype=np.float32)
+    for image in vCommowickWeights.values():
+        vSumImage += image
+    vNormalizedWeights = {}
+    for label, image in vCommowickWeights.items():
+        vNormalizedWeights[label] = np.divide(image, vSumImage)
+    return vNormalizedWeights
+
+def rotX(radians: float):
+    return torch.tensor([[1,0,0,0],
+                         [0,np.cos(radians),np.sin(radians),0],
+                         [0,-np.sin(radians),np.cos(radians),0],
+                         [0,0,0,1]],dtype=torch.float32).cuda()
+def rotY(radians:float):
+    return torch.tensor([[np.cos(radians),0,-np.sin(radians),0],
+                         [0,1,0,0],
+                         [-np.sin(radians),0,np.cos(radians),0],
+                         [0,0,0,1]],dtype=torch.float32).cuda()
+
+def rotZ(radians: float):
+    return torch.tensor([[np.cos(radians),-np.sin(radians),0,0],
+                         [np.sin(radians),np.cos(radians),0,0],
+                         [0,0,1,0],
+                         [0,0,0,1]],dtype=torch.float32).cuda()

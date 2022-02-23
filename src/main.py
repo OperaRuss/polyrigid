@@ -11,10 +11,10 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import utilities as utils
 
-vStop_Loss = 1e-5
-vStep_Size = 1e-3
-vMaxItrs = 10
-vUpdate_Rate = 1
+vStop_Loss = .93
+vStep_Size = .005
+vMaxItrs = 100000
+vUpdateRate = 100
 vHistory = {}
 vNumComponents = 12
 
@@ -42,7 +42,7 @@ for idx,img in aComponentSegmentations.items():
     aComponentSegmentations[idx] = utils.normalizeImage(img)
 
 for idx, img in aComponentSegmentations.items():
-    aComponentWeightValues[idx] = 1/vNumComponents
+    aComponentWeightValues[idx] = 1/2
 
 vImageDimensions = tImgTarget.shape
 vNDims = len(vImageDimensions) - 2
@@ -62,7 +62,8 @@ for idx in range(vNumComponents):
     if len(vImageDimensions) == 5:
         tWeightVolume[:,:,:,idx] = vWeightImages[idx]
     else:
-        tWeightVolume[:,:,idx] = vWeightImages[idx]
+        print("Not implemented for 2D at this time.")
+        exit(2)
 
 tWeightVolume = torch.tensor(tWeightVolume,dtype=torch.float32).cuda()
 
@@ -72,6 +73,7 @@ tSamplePoints = torch.cat((tSamplePoints,tOnes.unsqueeze(-1)),dim=1).unsqueeze(-
 
 tComponentTransforms = torch.zeros(vComponentTransformDimensions,dtype=torch.float32)
 tComponentTransforms = torch.autograd.Variable(data=tComponentTransforms,requires_grad=True).cuda()
+tComponentTransforms.retain_grad()
 tViewTransform = utils.rotY(-np.pi/2.0) # Weird grid_sample bug requires a view transform to fix.
                                         # $50 to the first person to find where I went wrong.
 for itr in range(vMaxItrs):
@@ -114,29 +116,50 @@ for itr in range(vMaxItrs):
                 tComponentTransforms[:, 5] -= torch.multiply(tComponentTransforms.grad[:, 5], vStep_Size)
         tComponentTransforms.grad.zero_()
 
-    vHistory[itr] = loss.item()
+    vHistory[itr] = abs(loss.item())
 
-    if 1.0 - abs(loss) < vStop_Loss:
+    if itr % vUpdateRate == 0:
+        print("Loss at iteration ",itr,":",loss)
+
+    if abs(loss) > vStop_Loss:
         print("Model converged at iteration ", itr, " with loss score ", loss)
-        print("Normalized final parameters were ", torch.matrix_exp(tComponentTransforms))
-        utils.showNDA_InEditor_BW(tImgWarped.detach().squeeze().cpu().numpy()[60, :, :], "Moving Image Result",
-                                  "final")
-        utils.showNDA_InEditor_BW(tImgTarget.squeeze().cpu().numpy()[60, :, :], "Fixed Image Target")
-
-        sub = torch.subtract(tImgTarget, tImgWarped).squeeze().cpu()
-        utils.showNDA_InEditor_BW(sub.detach().squeeze().numpy()[10, :, :], "Subtraction Image, Target - Warped")
         break
 
-print("Final loss achieved: ",loss)
-print("Final parameter data:")
+plt.imshow(tImgMoving.detach().squeeze().cpu().numpy()[vImageDimensions[2]//2, :, :],cmap='gray')
+plt.title("Moving Image")
+plt.show()
 
-for i in range(vNumComponents):
-    print("Component transformation "+str(i))
-    print(torch.matrix_exp(torch.reshape(tComponentTransforms[i],[vNDims+1,vNDims+1])))
+plt.imshow(tImgWarped.detach().squeeze().cpu().numpy()[vImageDimensions[2]//2, :, :],cmap='gray')
+plt.title("Warped Image")
+plt.show()
+
+plt.imshow(tImgTarget.squeeze().cpu().numpy()[vImageDimensions[2]//2, :, :],cmap='gray')
+plt.title("TargetImage")
+plt.show()
+
+sub = torch.subtract(tImgTarget, tImgWarped).squeeze().cpu()
+plt.imshow(sub.detach().squeeze().numpy()[vImageDimensions[2]//2, :, :],cmap='gray')
+plt.title("Target Image minus Warped Image")
+plt.show()
 
 data = sorted(vHistory.items())
 x,y = zip(*data)
 fig = plt.plot(x,y,marker =".",markersize=10)
 plt.title("NCC Loss by Iterations")
+plt.ylim(0.0,1.0)
 plt.show()
 
+
+
+with open("../images/results/20220222/res_transforms.txt","w") as out:
+    print(f"MaxIterations: {vStep_Size}",file=out)
+    print(f"Learning Rate: {vStep_Size}",file=out)
+    print(f"Target Loss: {vStop_Loss:.4f}",file=out)
+    print(f"Loss achieved: {loss:.4f}",file=out)
+    print("Final parameter Estimations:\n",file=out)
+    for i in range(vNumComponents):
+        print("Component transformation "+str(i),file=out)
+        print(torch.matrix_exp(torch.reshape(tComponentTransforms[i],(vNDims+1,vNDims+1))),file=out)
+
+tImgWarped = sitk.GetImageFromArray(tImgWarped.detach().squeeze().cpu().numpy(),False)
+sitk.WriteImage(tImgWarped, "../images/results/20220222/img_warped_latest.nii")

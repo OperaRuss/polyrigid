@@ -69,12 +69,12 @@ def _getMetricNCC(moving,target, windowWidth: int=9):
     var_T = sum_T2 - (2*norm_T*sum_T) + (norm_T*norm_T*windowSize)
 
     cc = cross_coef * cross_coef / (var_M * var_T + 1e-5)
-    return torch.mean(cc)
+    return -torch.mean(cc)
 
 def _getMetricMSE(moving, target):
     se = torch.subtract(moving,target)
     se = torch.pow(se,2.0)
-    return torch.mean(se)
+    return torch.mean(torch.sum(se))
 
 def _augmentDimensions(imageDimensions: tuple, augmentation):
     temp = list(imageDimensions)

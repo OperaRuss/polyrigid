@@ -13,7 +13,7 @@ import utilities as utils
 
 vStop_Loss = .93
 vStep_Size = .005
-vMaxItrs = 100000
+vMaxItrs = 1000
 vUpdateRate = 100
 vHistory = {}
 vNumComponents = 12
@@ -116,7 +116,7 @@ for itr in range(vMaxItrs):
                 tComponentTransforms[:, 5] -= torch.multiply(tComponentTransforms.grad[:, 5], vStep_Size)
         tComponentTransforms.grad.zero_()
 
-    vHistory[itr] = abs(loss.item())
+    vHistory[itr] = loss.item()
 
     if itr % vUpdateRate == 0:
         print("Loss at iteration ",itr,":",loss)

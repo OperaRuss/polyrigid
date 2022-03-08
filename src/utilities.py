@@ -72,9 +72,9 @@ def _getMetricNCC(moving,target, windowWidth: int=9):
     return -torch.mean(cc)
 
 def _getMetricMSE(moving, target):
-    se = torch.subtract(moving,target)
+    se = torch.subtract(target,moving)
     se = torch.pow(se,2.0)
-    return torch.mean(torch.sum(se))
+    return torch.mean(se)
 
 def _augmentDimensions(imageDimensions: tuple, augmentation):
     temp = list(imageDimensions)
@@ -122,19 +122,32 @@ def _getWeightCommowick(componentSegmentations: dict, ratesOfDecay: dict):
         vNormalizedWeights[label] = np.divide(image, vSumImage)
     return vNormalizedWeights
 
-def rotX(radians: float):
-    return torch.tensor([[1,0,0,0],
+def rotX(radians: float,isTorch: bool=False):
+    temp = np.array([[1,0,0,0],
                          [0,np.cos(radians),np.sin(radians),0],
                          [0,-np.sin(radians),np.cos(radians),0],
-                         [0,0,0,1]],dtype=torch.float32).cuda()
-def rotY(radians:float):
-    return torch.tensor([[np.cos(radians),0,-np.sin(radians),0],
+                         [0,0,0,1]],dtype=np.float32)
+    if (isTorch):
+        return torch.tensor(temp,dtype=torch.float32).cuda()
+    else:
+        return temp
+
+def rotY(radians:float, isTorch: bool=False):
+    temp = np.array([[np.cos(radians),0,-np.sin(radians),0],
                          [0,1,0,0],
                          [-np.sin(radians),0,np.cos(radians),0],
-                         [0,0,0,1]],dtype=torch.float32).cuda()
+                         [0,0,0,1]],dtype=np.float32)
+    if (isTorch):
+        return torch.tensor(temp,dtype=torch.float32).cuda()
+    else:
+        return temp
 
-def rotZ(radians: float):
-    return torch.tensor([[np.cos(radians),-np.sin(radians),0,0],
+def rotZ(radians: float, isTorch: bool=False):
+    temp = np.array([[np.cos(radians),-np.sin(radians),0,0],
                          [np.sin(radians),np.cos(radians),0,0],
                          [0,0,1,0],
-                         [0,0,0,1]],dtype=torch.float32).cuda()
+                         [0,0,0,1]],dtype=np.float32)
+    if (isTorch):
+        return torch.tensor(temp,dtype=torch.float32).cuda()
+    else:
+        return temp

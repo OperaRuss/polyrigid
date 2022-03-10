@@ -1,8 +1,0 @@
-SimpleITK~=2.1.1
-numpy~=1.22.0
-torch~=1.10.2+cu113
-matplotlib~=3.5.1
-scipy~=1.7.3
-scikit-image~=0.19.1
-pytorch3d~=0.6.1
-nibabel~=3.2.1

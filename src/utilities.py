@@ -1,6 +1,7 @@
 import nibabel as nib
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from scipy import ndimage
 
@@ -29,8 +30,11 @@ def normalizeImage(img: np.ndarray):
     max = np.max(img)
     min = np.min(img)
     temp = np.subtract(img, min)
-    temp = np.divide(temp, (max - min))
-    return temp
+    if max == 0 and min == 0:
+        return img
+    else:
+        temp = np.divide(temp, (max - min))
+        return temp
 
 def _getMetricNCC(moving,target, windowWidth: int=9):
     ndims = len(moving.shape) - 2
@@ -69,7 +73,7 @@ def _getMetricNCC(moving,target, windowWidth: int=9):
     var_T = sum_T2 - (2*norm_T*sum_T) + (norm_T*norm_T*windowSize)
 
     cc = cross_coef * cross_coef / (var_M * var_T + 1e-5)
-    return -torch.mean(cc)
+    return torch.mean(cc)
 
 def _getMetricMSE(moving, target):
     se = torch.subtract(target,moving)
@@ -151,3 +155,43 @@ def rotZ(radians: float, isTorch: bool=False):
         return torch.tensor(temp,dtype=torch.float32).cuda()
     else:
         return temp
+
+# Since these are immutable, declare them once when utilities is included, reference statically
+gradz = nn.Conv3d(3, 3, (3, 1, 1), padding=(1, 0, 0), bias=False, groups=3)
+gradz.weight.data[:, 0, :, 0, 0] = torch.tensor([-0.5, 0, 0.5]).view(1, 3).repeat(3, 1)
+gradz.cuda()
+grady = nn.Conv3d(3, 3, (1, 3, 1), padding=(0, 1, 0), bias=False, groups=3)
+grady.weight.data[:, 0, 0, :, 0] = torch.tensor([-0.5, 0, 0.5]).view(1, 3).repeat(3, 1)
+grady.cuda()
+gradx = nn.Conv3d(3, 3, (1, 1, 3), padding=(0, 0, 1), bias=False, groups=3)
+gradx.weight.data[:, 0, 0, 0, :] = torch.tensor([-0.5, 0, 0.5]).view(1, 3).repeat(3, 1)
+gradx.cuda()
+tEye_JacDec = torch.eye(3,3).view(3,3,1,1,1).cuda()
+
+def jacobian_determinant_3d(tDisplacementField):
+    B,D,H,W,_ = tDisplacementField.size()
+    tDisplacementField = tDisplacementField.permute(0,4,1,2,3)
+    dense_pix = tDisplacementField*(torch.Tensor([H-1,W-1,D-1])/2).view(1,3,1,1,1).to(tDisplacementField.device)
+    with torch.no_grad():
+        jacobian = torch.cat((gradz(dense_pix), grady(dense_pix), gradx(dense_pix)), 0) \
+                   + tEye_JacDec
+        jacobian = jacobian[:,:,2:-2,2:-2,2:-2]
+        jac_det = jacobian[0,0,:,:,:] * \
+                    (jacobian[1,1,:,:,:] * jacobian[2,2,:,:,:] - jacobian[1,2,:,:,:] * jacobian[2,1,:,:,:])\
+                  - jacobian[1,0,:,:,:] * \
+                    (jacobian[0,1,:,:,:] * jacobian[2,2,:,:,:] - jacobian[0,2,:,:,:] * jacobian[2,1,:,:,:]) \
+                  + jacobian[2,0,:,:,:] * \
+                    (jacobian[0,1,:,:,:] * jacobian[1,2,:,:,:] - jacobian[0,2,:,:,:] * jacobian[1,1,:,:,:])
+
+    return jac_det
+
+def _loss_JDet(tDisplacementField):
+    neg_Jdet = -1.0 * jacobian_determinant_3d(tDisplacementField)
+    selected_neg_Jdet = F.relu(neg_Jdet)
+    return torch.mean(selected_neg_Jdet)
+
+def _loss_Smooth(tDisplacementField):
+    dy = torch.abs(tDisplacementField[:,1:,:,:,:] - tDisplacementField[:,:-1,:,:,:])
+    dx = torch.abs(tDisplacementField[:,:,1:,:,:] - tDisplacementField[:,:,:-1,:,:])
+    dz = torch.abs(tDisplacementField[:,:,:,1:,:] - tDisplacementField[:,:,:,:-1,:])
+    return (torch.mean(dx*dx)+torch.mean(dy*dy)+torch.mean(dz*dz))/3.0

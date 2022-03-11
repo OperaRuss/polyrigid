@@ -58,7 +58,7 @@ from sklearn.metrics import f1_score
 # vMaxItrs and vLambda may be set to list objects in order to run
 # multiple consecutive runs using different parameters.
 vStop_Loss = .93
-vStep_Size = [0.005] #[pow(2,-2),pow(2,-4),pow(2,-8),pow(2,-16)]
+vStep_Size = [0.01] #[pow(2,-2),pow(2,-4),pow(2,-8),pow(2,-16)]
 vMaxItrs = [100] #[1,100,1000,10000]
 vUpdateRate = 10
 vHistory = {}
@@ -164,12 +164,14 @@ for pMaxItrs in vMaxItrs:
             '''
 
             #tComponentTransforms = torch.zeros(vComponentTransformDimensions,dtype=torch.float32)
-            tComponentTransforms = torch.normal(mean=0,std=torch.pi/(2e3),size=vComponentTransformDimensions)
-            tComponentTransforms[:,12:16] = 0
-            tComponentTransforms = torch.autograd.Variable(data=tComponentTransforms,requires_grad=True).cuda()
+            tComponentTransforms = torch.randn(vComponentTransformDimensions, device='cuda')
+            tComponentTransforms = (torch.pi / 2e3) * tComponentTransforms.clone().detach()
+            tComponentTransforms[:, 12:16] = 0
+            tComponentTransforms = tComponentTransforms.requires_grad_(True)
             tComponentTransforms.retain_grad()
             tViewTransform = utils.rotY(-np.pi/2.0,True) # Weird grid_sample bug requires a view transform to fix.
                                                     # $50 to the first person to find where I went wrong.
+            optimizer = torch.optim.Adam([tComponentTransforms], lr=pStepSize)
 
             # TEST VERISON
             # If you desire to see how the model fuses known parameters, swap this code block out for the
@@ -195,6 +197,7 @@ for pMaxItrs in vMaxItrs:
                   + " and JD Regularization parameter " + str(1.0 - pLamda))
             print("Running model for maximum of " + str(pMaxItrs) + " iterations.")
             for itr in range(pMaxItrs):
+                optimizer.zero_grad()
                 # Calculate 4x4 transformation matrices
                 tTransformField = torch.matmul(tWeightVolume,tComponentTransforms)
                 tTransformField = torch.reshape(tTransformField,vLEPTImageDimensions_linear)
@@ -212,8 +215,7 @@ for pMaxItrs in vMaxItrs:
                 # Resample the image.  Note, we must use bilinear interpolation in order to later optimize by GD.
                 tImgWarped = F.grid_sample(tImgMoving,tDisplacementField,
                                            mode='bilinear',padding_mode='zeros',align_corners=False)
-                tImgFixed = F.grid_sample(tImgTarget,tDisplacementField,
-                                          mode='bilinear',padding_mode='zeros',align_corners=False)
+                tImgFixed = 1.0 * tImgTarget
 
                 # Calculate the loss
                 # loss = utils._getMetricMSE(tImgWarped,tImgFixed)
@@ -222,84 +224,25 @@ for pMaxItrs in vMaxItrs:
                 # scores individuall.  I extracted these when I put them into the system.  Am investigating whether
                 # the loss score should be negative or positive, but so far positive tends to maximize invertbile fields
                 # in the final output.
-                loss = -utils._getMetricNCC(tImgWarped,tImgFixed,5) \
-                               + pLamda * utils._loss_Smooth(tDisplacementField) \
-                               + (1-pLamda) * utils._loss_JDet(tDisplacementField)
+                reg_loss = utils._getMetricMSE(tImgWarped, tImgFixed)
+                smooth_loss = 0.0 * pLamda * utils._loss_Smooth(tDisplacementField)
+                jdet_loss = 0.0 * (1-pLamda) * utils._loss_JDet(tDisplacementField)
+                loss = reg_loss + smooth_loss + jdet_loss
 
                 # Calculate gradients wrt parameters
                 loss.backward()
 
                 # Update parameters based on gradients
-                with torch.no_grad():
-                    '''
-                    Here are two versions of the update function.  The one above (marked Experimental 3/4) attempts
-                    to leverage skew symmetry of rotation matrices on SO(3) to update the parameters.  By definition
-                    the rotation group consists of all unique rotations, which are defined by their skew symmetric form.
-                    The original Arsigny, et al., paper used skew symmetry to provide a unique fusion of velocities.  Later
-                    they moved to the principal matrix logarithm as a definition, since rotations will always be under pi radians
-                    in this definition.  Here, I was trying it out to see if it enforced orthogonality on the matrices.  It does
-                    show accuracy when close to the identity, but it does not produce meaningful results any more than the other
-                    rotation representation does.
-                    
-                    UPDATE 3/10: In terms of jacobian determinants, the skew symmetric update appears to lead to invertible
-                    transformations while the update function lower down tends to produce highly negative determinants even
-                    under a few iterations.
-                    '''
-
-                    # Experimental Update function 3/4
-                    # skew symmetric matrix is S = A - A.T
-                    if itr % 2 == 0:
-                        # Update Rotation
-                        tUpdateTransforms = torch.matrix_exp(tComponentTransforms.view(vNumComponents,4,4)[:,0:3,0:3])
-                        for i in range(vNumComponents):
-                            tUpdateTransforms[i] = tUpdateTransforms[i].T * tComponentTransforms.grad.view(vNumComponents,4,4)[i,0:3,0:3]
-                            tUpdateTransforms[i] = tUpdateTransforms[i] - tUpdateTransforms[i].T
-                        tUpdateTransforms = torch.concat((tUpdateTransforms,torch.zeros((vNumComponents,3,1)).cuda()),axis=2)
-                        tUpdateTransforms = torch.concat((tUpdateTransforms,torch.zeros((vNumComponents,1,4)).cuda()),axis=1)
-
-                        tComponentTransforms -= torch.multiply(tUpdateTransforms.view(vNumComponents,16),pStepSize)
-                        tComponentTransforms.grad.zero_()
-                    else:
-                        # Update translations for each component
-                        tComponentTransforms[:, 3] -= torch.multiply(tComponentTransforms.grad[:, 3], pStepSize)
-                        tComponentTransforms[:, 7] -= torch.multiply(tComponentTransforms.grad[:, 7], pStepSize)
-                        tComponentTransforms[:, 11] -= torch.multiply(tComponentTransforms.grad[:, 11], pStepSize)
-
-                    '''
-                    This is the original test function, following a standard format for gradient descent updates.
-                    Note that the affine matricies are stored in a [N,16] format so they must be handled wrt their
-                    positional arguments as though written as [[R t],[0000]] (and the last row must always be zeros
-                    in order for the principal matrix log to be well defined).
-                    
-                    UPDATE: 3/10 - initial tests in plotting the Jacobian determinant of the vector fields show
-                    that updating parameters in this way creates a higher rate of non-invertible transformations at
-                    each voxel.
-                    '''
-                    '''
-                    if vNDims == 3:
-                        if itr % 2 == 0:  # i is the iteration counter
-                            tComponentTransforms[:, 0:3] -= torch.multiply(tComponentTransforms.grad[:, 0:3], pStepSize)
-                            tComponentTransforms[:, 4:7] -= torch.multiply(tComponentTransforms.grad[:, 4:7], pStepSize)
-                            tComponentTransforms[:, 8:11] -= torch.multiply(tComponentTransforms.grad[:, 8:11], pStepSize)
-                        else:
-                            # Update translations for each component
-                            tComponentTransforms[:, 3] -= torch.multiply(tComponentTransforms.grad[:, 3], pStepSize)
-                            tComponentTransforms[:, 7] -= torch.multiply(tComponentTransforms.grad[:, 7], pStepSize)
-                            tComponentTransforms[:, 11] -= torch.multiply(tComponentTransforms.grad[:, 11], pStepSize)
-                    else:
-                        if itr % 2 == 0:  # rotation update
-                            tComponentTransforms[:, 0:2] -= torch.multiply(tComponentTransforms.grad[:, 0:2], pStepSize)
-                            tComponentTransforms[:, 3:5] -= torch.multiply(tComponentTransforms.grad[:, 3:5], pStepSize)
-                        else:  # translation update
-                            tComponentTransforms[:, 2] -= torch.multiply(tComponentTransforms.grad[:, 2], pStepSize)
-                            tComponentTransforms[:, 5] -= torch.multiply(tComponentTransforms.grad[:, 5], pStepSize)
-                    tComponentTransforms.grad.zero_()
-                    '''
+                optimizer.step()
                 vHistory[itr] = loss.item()
 
                 # check for exit conditions.  Still not clear on what constitutes provable convergence.
                 if itr % vUpdateRate == 0:
-                    print("Loss at iteration ",itr,":",loss)
+                   print(
+                       "Itr: {}, Total {} Reg {} Smooth {} Jdet {}".format(
+                           itr, loss.item(), reg_loss.item(), smooth_loss.item(), jdet_loss.item(),
+                       )
+                   )
 
                 if abs(loss) > vStop_Loss:
                     print("Model converged at iteration ", itr, " with loss score ", loss)

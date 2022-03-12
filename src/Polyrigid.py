@@ -7,9 +7,9 @@ from sklearn.metrics import f1_score
 
 def rotX(radians: float,isTorch: bool=False):
     temp = np.array([[1,0,0,0],
-                         [0,np.cos(radians),np.sin(radians),0],
-                         [0,-np.sin(radians),np.cos(radians),0],
-                         [0,0,0,1]],dtype=np.float32)
+                     [0,np.cos(radians),np.sin(radians),0],
+                     [0,-np.sin(radians),np.cos(radians),0],
+                     [0,0,0,1]],dtype=np.float32)
     if (isTorch):
         return torch.tensor(temp,dtype=torch.float32).cuda()
     else:
@@ -17,9 +17,9 @@ def rotX(radians: float,isTorch: bool=False):
 
 def rotY(radians:float, isTorch: bool=False):
     temp = np.array([[np.cos(radians),0,-np.sin(radians),0],
-                         [0,1,0,0],
-                         [-np.sin(radians),0,np.cos(radians),0],
-                         [0,0,0,1]],dtype=np.float32)
+                     [0,1,0,0],
+                     [-np.sin(radians),0,np.cos(radians),0],
+                     [0,0,0,1]],dtype=np.float32)
     if (isTorch):
         return torch.tensor(temp,dtype=torch.float32).cuda()
     else:
@@ -27,9 +27,9 @@ def rotY(radians:float, isTorch: bool=False):
 
 def rotZ(radians: float, isTorch: bool=False):
     temp = np.array([[np.cos(radians),-np.sin(radians),0,0],
-                         [np.sin(radians),np.cos(radians),0,0],
-                         [0,0,1,0],
-                         [0,0,0,1]],dtype=np.float32)
+                     [np.sin(radians),np.cos(radians),0,0],
+                     [0,0,1,0],
+                     [0,0,0,1]],dtype=np.float32)
     if (isTorch):
         return torch.tensor(temp,dtype=torch.float32).cuda()
     else:
@@ -56,10 +56,10 @@ class Polyrigid(nn.Module):
                                             self.mNDims + 1, self.mNDims + 1)
         self.mDisplacementFieldDimensions = (*self.mImageDimensions[2::],self.mNDims)
 
-        self.tComponentRotations = nn.Parameter(torch.zeros(self.mComponentDims_Rotations),
-                                                requires_grad=True).cuda()
-        self.tComponentTransforms = nn.Parameter(torch.zeros(self.mComponentDims_Translations),
-                                                 requires_grad=True).cuda()
+        self.tComponentRotations = nn.Parameter(torch.zeros(self.mComponentDims_Rotations).cuda(),
+                                                requires_grad=True)
+        self.tComponentTransforms = nn.Parameter(torch.zeros(self.mComponentDims_Translations).cuda(),
+                                                 requires_grad=True)
         self.tDisplacementField = None
         self.tImgFloat = imgFloat
         self.tImgSegmentation = self._getSegmentationImage(componentSegmentations)
@@ -145,6 +145,6 @@ class Polyrigid(nn.Module):
         return torch.reshape(self.tDisplacementField, self.mDisplacementFieldDimensions).unsqueeze(0)
 
     def forward(self):
-        DVF = self._getLEPT()
-        return F.grid_sample(self.tImgFloat,DVF,
+        self.tDisplacementField = self._getLEPT()
+        return F.grid_sample(self.tImgFloat,self.tDisplacementField,
                              mode='bilinear',padding_mode='zeros',align_corners=False)

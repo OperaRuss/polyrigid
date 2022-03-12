@@ -54,9 +54,10 @@ import utilities as utils
 from sklearn.metrics import f1_score
 import Polyrigid as pr
 
+
 def get_model(imgFloating: torch.tensor, componentSegmentations: dict,
               componentWeights: dict, learningRate: float=0.005):
-    model = pr.Polyrigid(imgFloating, componentSegmentations, componentWeights).to('cuda')
+    model = pr.Polyrigid(imgFloating, componentSegmentations, componentWeights)
     return model, torch.optim.Adam(model.parameters(), learningRate)
 
 # SECTION 1: Model Parameters
@@ -64,7 +65,7 @@ def get_model(imgFloating: torch.tensor, componentSegmentations: dict,
 # multiple consecutive runs using different parameters.
 vStop_Loss = .93
 vStep_Size = [0.01] #[pow(2,-2),pow(2,-4),pow(2,-8),pow(2,-16)]
-vMaxItrs = [1] #[1,100,1000,10000]
+vMaxItrs = [100] #[1,100,1000,10000]
 vUpdateRate = 10
 vHistory = {}
 vNumComponents = 12
@@ -72,7 +73,7 @@ vInFolder = "../images/input/cropped/"
 vInFrame_Float = "frame_6"
 vInFrame_Target = "frame_5"
 vOutFile = "../images/results/"
-vDate = "20220311"
+vDate = "20220310"
 vLambda = [1.0] #[1.0,0.75,0.5,0.25,0.0]
 
 for pMaxItrs in vMaxItrs:
@@ -115,13 +116,84 @@ for pMaxItrs in vMaxItrs:
             for idx, img in aComponentSegmentations_Float.items():
                 aComponentWeightValues[idx] = 1/2
 
-            model, optimizer = get_model(tImgMoving,aComponentSegmentations_Float,
-                                         aComponentWeightValues,learningRate=pStepSize)
+            # SECTION 3: INTERNAL DIMENSIONAL PARAMETERS
+            vImageDimensions = tImgTarget.shape
+            vNDims = len(vImageDimensions) - 2
+            vComponentTransformDimensions = (vNumComponents,pow(vNDims + 1,2))
+            vWeightImageDimensions = (*vImageDimensions[2:],vNumComponents)
+            vLEPTImageDimensions_affine = utils._augmentDimensions(vImageDimensions, [vNDims + 1, vNDims + 1])
+            vLEPTImageDimensions_linear = (np.prod(vImageDimensions),vNDims + 1,vNDims + 1)
+            vDisplacementFieldDimensions = (*vImageDimensions[2::],vNDims)
+            tWeightVolume = np.zeros(vWeightImageDimensions)
+            tSamplePoints_Depth = torch.linspace(-1, 1, steps=vImageDimensions[2])
+            tSamplePoints_Height = torch.linspace(-1, 1, steps=vImageDimensions[3])
+            tSamplePoints_Width = torch.linspace(-1, 1, steps=vImageDimensions[4])
 
-            tComponentSegImg_Target = np.zeros(model.mImageDimensions)
-            for img in aComponentSegmentations_Target.values():
-                tComponentSegImg_Target += img
-            tComponentSegImg_Target = torch.tensor(tComponentSegImg_Target, dtype=torch.float32).cuda()
+            # SECTION 4: CREATE IMAGE WEIGHT VOLUME
+            vWeightImages = utils._getWeightCommowick(aComponentSegmentations_Float, aComponentWeightValues)
+
+            for idx in range(vNumComponents):
+                if len(vImageDimensions) == 5:
+                    tWeightVolume[:,:,:,idx] = vWeightImages[idx]
+                else:
+                    print("Not implemented for 2D at this time.")
+                    exit(2)
+
+            tWeightVolume = torch.tensor(tWeightVolume,dtype=torch.float32).cuda()
+
+            # SECTION 5: GENERATE SAMPLE POINTS FOR IMAGE RESAMPLING
+            # Note, due to the semantics for torch.grid_sample() the sample points are normalized
+            # to fall in the range [-1,1].  The image array origin ([0,0,0]) falls in the upper left corner
+            # which corresponds to the normalized coordinate [-1,-1,-1].
+            tSamplePoints = torch.cartesian_prod(tSamplePoints_Depth,tSamplePoints_Height, tSamplePoints_Width)
+            tOnes = torch.ones(np.prod(vImageDimensions),dtype=torch.float32)
+            tSamplePoints = torch.cat((tSamplePoints,tOnes.unsqueeze(-1)),dim=1).unsqueeze(-1).cuda()
+
+            # SECTION 6: INTIALIZE COMPONENT TRANSFORMS
+            '''
+            Components are initialized to an identity transformation.  The image should assume that there
+            is no change between the source and target at the start of the program.  In Euclidean space, this
+            would be a standard identity matrix.  In the terms of a velocity field, this would be equivalent to a
+            speed of zero in all directions.
+            
+            The commented out line is an identiy velocity field (all zeros).  This caused learning
+            issues, and so I opted to initialize the components with small velocities drawn from a zero-centered
+            normal distribution.  It showed improvements over initializing at zero.
+            
+            Also note that we have to manually set the final row to zeros so that it follows the appropriate
+            format to be a principal logarithm of an affine transformation matrix in homogeneous coordinates.
+            '''
+
+            #tComponentTransforms = torch.zeros(vComponentTransformDimensions,dtype=torch.float32)
+            tComponentTransforms = torch.randn(vComponentTransformDimensions, device='cuda')
+            tComponentTransforms = (torch.pi / 2e3) * tComponentTransforms.clone().detach()
+            tComponentTransforms[:, 12:16] = 0
+            tComponentTransforms = tComponentTransforms.requires_grad_(True)
+            tComponentTransforms.retain_grad()
+            tViewTransform = utils.rotY(-np.pi/2.0,True) # Weird grid_sample bug requires a view transform to fix.
+                                                    # $50 to the first person to find where I went wrong.
+            optimizer = torch.optim.Adam([tComponentTransforms], lr=pStepSize)
+
+            # TEST VERISON
+            # If you desire to see how the model fuses known parameters, swap this code block out for the
+            # code block above.  Using the helper functions for rotations in the utilities file, you can
+            # compose Euclidean 4x4 transformation matricies and initialize the components that way.
+            # Setting vMaxItrs to 1 will force the LEPT fusion to only perform a forward pass through the model.
+            '''
+            import scipy
+            
+            tComponentTransforms = np.zeros(vComponentTransformDimensions,dtype=np.float32)
+            for i in range(vNumComponents):
+                temp = scipy.linalg.logm(utils.rotX((np.pi + np.random.normal(scale=0.5))/ 16.0, isTorch=False))
+                tComponentTransforms[i,:] = np.reshape(temp,(1,16))
+            tComponentTransforms = torch.tensor(tComponentTransforms,dtype=torch.float32)
+            tComponentTransforms = torch.autograd.Variable(data=tComponentTransforms,requires_grad=True).cuda()
+            tComponentTransforms.retain_grad()
+            tViewTransform = utils.rotY(-np.pi/2.0,isTorch=True) # Weird grid_sample bug requires a view transform to fix.
+                                                    # $50 to the first person to find where I went wrong.
+            '''
+
+
 
             # STEP 7: ITERATION TOWARDS OPTIMIZATION
             print("Running with Smoothness Parameter " + str(pLamda)
@@ -130,13 +202,35 @@ for pMaxItrs in vMaxItrs:
             for itr in range(pMaxItrs):
                 optimizer.zero_grad()
                 # Calculate 4x4 transformation matrices
-                tImgWarped = model.forward()
+                tTransformField = torch.matmul(tWeightVolume,tComponentTransforms)
+                tTransformField = torch.reshape(tTransformField,vLEPTImageDimensions_linear)
+                tTransformField = torch.matrix_exp(tTransformField)
+                tTransformField = torch.matmul(tViewTransform,tTransformField)
+                # Due to the layout in the tensor, we use the Einstein Sum to perform a dot product
+                # between the current 4x4 transformation and the 4x1 sample points.  This gives
+                # The new sample point given the prior transformation.
+                tTransformField = torch.einsum('bij,bjk->bik',tTransformField,tSamplePoints)
+                tTransformField.squeeze()
+                tTransformField = torch.div(tTransformField,tTransformField[:,vNDims,None])[:,:vNDims]
+
+                tDisplacementField = torch.reshape(tTransformField,vDisplacementFieldDimensions).unsqueeze(0)
+
+                # Resample the image.  Note, we must use bilinear interpolation in order to later optimize by GD.
+                tImgWarped = F.grid_sample(tImgMoving,tDisplacementField,
+                                           mode='bilinear',padding_mode='zeros',align_corners=False)
                 tImgFixed = 1.0 * tImgTarget
 
+                # Calculate the loss
+                # loss = utils._getMetricMSE(tImgWarped,tImgFixed)
+
+                # The sources from which these funcitons are tend to apply a negative multiplier to each of these
+                # scores individuall.  I extracted these when I put them into the system.  Am investigating whether
+                # the loss score should be negative or positive, but so far positive tends to maximize invertbile fields
+                # in the final output.
                 reg_loss = utils._getMetricMSE(tImgWarped, tImgFixed)
-                smooth_loss = 0.0 * pLamda * utils._loss_Smooth(model.tDisplacementField)
-                jdet_loss = 0.0 * (1-pLamda) * utils._loss_JDet(model.tDisplacementField)
-                loss = reg_loss #+ smooth_loss + jdet_loss
+                smooth_loss = 0.0 * pLamda * utils._loss_Smooth(tDisplacementField)
+                jdet_loss = 0.0 * (1-pLamda) * utils._loss_JDet(tDisplacementField)
+                loss = reg_loss + smooth_loss + jdet_loss
 
                 # Calculate gradients wrt parameters
                 loss.backward()
@@ -146,7 +240,6 @@ for pMaxItrs in vMaxItrs:
                 vHistory[itr] = loss.item()
 
                 # check for exit conditions.  Still not clear on what constitutes provable convergence.
-
                 if itr % vUpdateRate == 0:
                    print(
                        "Itr: {}, Total {} Reg {} Smooth {} Jdet {}".format(
@@ -162,7 +255,7 @@ for pMaxItrs in vMaxItrs:
                     if abs((loss + vHistory[itr-1] + vHistory[itr-2 ]) / 3.0) < 1e-5:
                         print("Model growth slowed at iteration", itr, "with loss score ", loss)
                         break
-                
+
             # SECTION 8: MODEL OUTPUT
             # The below sections produce results from the run of the model and put them in the specified
             # output folder.  Starts with establishing a folder based on the current model parameters then
@@ -178,26 +271,26 @@ for pMaxItrs in vMaxItrs:
 
             if not os.path.exists(vOutPath):
                 os.makedirs(vOutPath)
-            
-            tImgWarped_Seg = F.grid_sample(model.tImgSegmentation,
-                                           model.tDisplacementField,
+
+            tImgWarped_Seg = F.grid_sample(torch.tensor(tComponentSegImg_Float).cuda().unsqueeze(0).unsqueeze(0),
+                                           tDisplacementField,
                                            mode='nearest', padding_mode='zeros', align_corners=False)
-            
-            plt.imshow(tImgMoving.detach().squeeze().cpu().numpy()[tImgMoving.shape[2]//2, :, :],cmap='gray')
+
+            plt.imshow(tImgMoving.detach().squeeze().cpu().numpy()[vImageDimensions[2]//2, :, :],cmap='gray')
             plt.title("Moving Image")
             plt.axis('off')
             plt.savefig(vOutPath + "/img_moving.png", bbox_inches='tight')
             #plt.show()
             plt.close()
 
-            plt.imshow(tImgWarped.detach().squeeze().cpu().numpy()[tImgWarped.shape[2]//2, :, :],cmap='gray')
+            plt.imshow(tImgWarped.detach().squeeze().cpu().numpy()[vImageDimensions[2]//2, :, :],cmap='gray')
             plt.title("Warped Image")
             plt.axis('off')
             plt.savefig(vOutPath + "/img_warped.png", bbox_inches='tight')
             #plt.show()
             plt.close()
 
-            plt.imshow(tImgTarget.squeeze().cpu().numpy()[tImgTarget.shape[2]//2, :, :],cmap='gray')
+            plt.imshow(tImgTarget.squeeze().cpu().numpy()[vImageDimensions[2]//2, :, :],cmap='gray')
             plt.title("Target Image")
             plt.axis('off')
             plt.savefig(vOutPath + "/img_target.png", bbox_inches='tight')
@@ -217,23 +310,21 @@ for pMaxItrs in vMaxItrs:
             sitk.WriteImage(tImgWarped, vOutPath + "/nii_warped.nii")
             tImgWarped = sitk.GetArrayFromImage(tImgWarped)
 
-            vDICE_Before = f1_score(tComponentSegImg_Target.detach().cpu().numpy().reshape(-1,1),
-                                    model.tImgSegmentation.detach().cpu().numpy().reshape(-1,1),average='macro')
-            vDICE_After = f1_score(tComponentSegImg_Target.detach().cpu().numpy().reshape(-1,1),
-                                   tImgWarped_Seg.detach().cpu().view((-1,1)).numpy(),average="macro")
+            vDICE_Before = f1_score(tComponentSegImg_Target.reshape(-1,1),tComponentSegImg_Float.reshape(-1,1),average='macro')
+            vDICE_After = f1_score(tComponentSegImg_Target.reshape(-1,1),tImgWarped_Seg.detach().cpu().view((-1,1)).numpy(),average="macro")
 
-            tComponentSegImg_Float = sitk.GetImageFromArray(model.tImgSegmentation.detach().cpu().numpy(),False)
+            tComponentSegImg_Float = sitk.GetImageFromArray(tComponentSegImg_Float,False)
             sitk.WriteImage(tComponentSegImg_Float, vOutPath + "/nii_float_seg.nii")
             tComponentSegImg_Float = sitk.GetArrayFromImage(tComponentSegImg_Float)
 
             tImgWarped_Seg = sitk.GetImageFromArray(tImgWarped_Seg.detach().squeeze().cpu().numpy(),False)
             sitk.WriteImage(tImgWarped_Seg, vOutPath + "/nii_warped_seg.nii")
 
-            tComponentSegImg_Target = sitk.GetImageFromArray(tComponentSegImg_Target.detach().cpu().numpy(),False)
+            tComponentSegImg_Target = sitk.GetImageFromArray(tComponentSegImg_Target,False)
             sitk.WriteImage(tComponentSegImg_Target, vOutPath + "/nii_target_seg.nii")
             tComponentSegImg_Target = sitk.GetArrayFromImage(tComponentSegImg_Target)
 
-            tDeterminantMap = utils.jacobian_determinant_3d(model.tDisplacementField)
+            tDeterminantMap = utils.jacobian_determinant_3d(tDisplacementField)
             tDeterminantMap = tDeterminantMap.detach().cpu().numpy()
             tDeterminantMap = tDeterminantMap
 
@@ -268,9 +359,9 @@ for pMaxItrs in vMaxItrs:
                 print(f"DICE score after registration: {vDICE_After:.4f}",file=out)
                 print(f"Target Loss: {vStop_Loss:.4f}",file=out)
                 print(f"Loss achieved: {loss:.4f}",file=out)
-                print(f"Percentage of Jacobian determinants negative: {(vNumNeg/(np.prod(model.mImageDimensions))*100):.2f}%",file=out)
+                print(f"Percentage of Jacobian determinants negative: {(vNumNeg/(np.prod(vImageDimensions))*100):.2f}%",file=out)
                 print("Final parameter Estimations:\n",file=out)
                 for i in range(vNumComponents):
-                    aCompTransforms = model._getLogComponentTransforms()
                     print("Component transformation "+str(i),file=out)
-                    print(torch.matrix_exp(torch.reshape(aCompTransforms[i],(model.mNDims+1,model.mNDims+1))),file=out)
+                    print(torch.matrix_exp(torch.reshape(tComponentTransforms[i],(vNDims+1,vNDims+1))),file=out)
+

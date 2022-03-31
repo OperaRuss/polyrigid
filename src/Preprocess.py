@@ -112,7 +112,7 @@ def getIsotropicResampling(fpFILENAME:str=None,fpIN="..\\images\\input\\unpacked
         oDim = _getDimString(oDim)
         oVox = _getDimString([isoVoxelDim]*3)
 
-        os.system("c3d " + iImg + " --resample " + oDim + " --spacing " + oVox + "mm --o " + oImg)
+        os.system("c3d " + iImg + " -resample " + oDim + " -spacing " + oVox + "mm -o " + oImg)
 
     return out
 

@@ -4,7 +4,6 @@ import SimpleITK as sitk
 import numpy as np
 import os
 import argparse
-import utilities as utils
 
 # TODO This file should contain an Atlas-building function
 # TODO This file should contain a "Warp Back to Source" function

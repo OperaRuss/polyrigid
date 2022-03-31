@@ -1,9 +1,9 @@
 import nibabel as nib
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from scipy import ndimage
+import matplotlib.pyplot as plt
 
 def getFramesFromNifty14D(inputFilePath, outputFilePath):
     img = nib.load(inputFilePath)
@@ -156,34 +156,24 @@ def rotZ(radians: float, isTorch: bool=False):
     else:
         return temp
 
-# Since these are immutable, declare them once when utilities is included, reference statically
-gradz = nn.Conv3d(3, 3, (3, 1, 1), padding=(1, 0, 0), bias=False, groups=3)
-gradz.weight.data[:, 0, :, 0, 0] = torch.tensor([-0.5, 0, 0.5]).view(1, 3).repeat(3, 1)
-gradz.cuda()
-grady = nn.Conv3d(3, 3, (1, 3, 1), padding=(0, 1, 0), bias=False, groups=3)
-grady.weight.data[:, 0, 0, :, 0] = torch.tensor([-0.5, 0, 0.5]).view(1, 3).repeat(3, 1)
-grady.cuda()
-gradx = nn.Conv3d(3, 3, (1, 1, 3), padding=(0, 0, 1), bias=False, groups=3)
-gradx.weight.data[:, 0, 0, 0, :] = torch.tensor([-0.5, 0, 0.5]).view(1, 3).repeat(3, 1)
-gradx.cuda()
-tEye_JacDec = torch.eye(3,3).view(3,3,1,1,1).cuda()
-
 def jacobian_determinant_3d(tDisplacementField):
-    B,D,H,W,_ = tDisplacementField.size()
-    tDisplacementField = tDisplacementField.permute(0,4,1,2,3)
-    dense_pix = tDisplacementField*(torch.Tensor([H-1,W-1,D-1])/2).view(1,3,1,1,1).to(tDisplacementField.device)
-    with torch.no_grad():
-        jacobian = torch.cat((gradz(dense_pix), grady(dense_pix), gradx(dense_pix)), 0) \
-                   + tEye_JacDec
-        jacobian = jacobian[:,:,2:-2,2:-2,2:-2]
-        jac_det = jacobian[0,0,:,:,:] * \
-                    (jacobian[1,1,:,:,:] * jacobian[2,2,:,:,:] - jacobian[1,2,:,:,:] * jacobian[2,1,:,:,:])\
-                  - jacobian[1,0,:,:,:] * \
-                    (jacobian[0,1,:,:,:] * jacobian[2,2,:,:,:] - jacobian[0,2,:,:,:] * jacobian[2,1,:,:,:]) \
-                  + jacobian[2,0,:,:,:] * \
-                    (jacobian[0,1,:,:,:] * jacobian[1,2,:,:,:] - jacobian[0,2,:,:,:] * jacobian[1,1,:,:,:])
+    '''
+    Implementation from
+    https://github.com/cwmok/LapIRN/blob/bc45fe07ae289985e4de99e850b0257524e3132d/Code/miccai2020_model_stage.py#L781
+    :param tDisplacementField:
+    :return:
+    '''
+    dy = tDisplacementField[:,1:,:-1,:-1,:] - tDisplacementField[:,:-1,:-1,:-1,:]
+    dx = tDisplacementField[:,:-1,1:,:-1,:] - tDisplacementField[:,:-1,:-1,:-1,:]
+    dz = tDisplacementField[:,:-1,:-1,1:,:] - tDisplacementField[:,:-1,:-1,:-1,:]
 
-    return jac_det
+    Jdet0 = dx[:,:,:,:,0] * (dy[:,:,:,:,1]*dz[:,:,:,:,2] - dy[:,:,:,:,2]*dz[:,:,:,:,1])
+    Jdet1 = dx[:,:,:,:,1] * (dy[:,:,:,:,0]*dz[:,:,:,:,2] - dy[:,:,:,:,2]*dz[:,:,:,:,0])
+    Jdet2 = dx[:,:,:,:,2] * (dy[:,:,:,:,0]*dz[:,:,:,:,0] - dy[:,:,:,:,1]*dz[:,:,:,:,0])
+
+    Jdet = Jdet0 - Jdet1 + Jdet2
+
+    return Jdet
 
 def _loss_JDet(tDisplacementField):
     neg_Jdet = -1.0 * jacobian_determinant_3d(tDisplacementField)
@@ -195,3 +185,15 @@ def _loss_Smooth(tDisplacementField):
     dx = torch.abs(tDisplacementField[:,:,1:,:,:] - tDisplacementField[:,:,:-1,:,:])
     dz = torch.abs(tDisplacementField[:,:,:,1:,:] - tDisplacementField[:,:,:,:-1,:])
     return (torch.mean(dx*dx)+torch.mean(dy*dy)+torch.mean(dz*dz))/3.0
+
+def pltImage(tImg: torch.tensor, title: str="", cmap:str='gray',
+             toShow: bool=True, toSave: bool=False,
+             outPath:str="../images/results/", outFile: str="img.png"):
+    plt.imshow(tImg,cmap=cmap)
+    plt.title(title)
+    plt.axis('off')
+    if(toSave):
+        plt.savefig(outPath + outFile,bbox_inches='tight')
+    if(toShow):
+        plt.show()
+    plt.close()

@@ -130,19 +130,38 @@ class Polyrigid(nn.Module):
         temp = torch.cat((temp,torch.zeros(self.mComponentDims_Zeros).cuda()),axis=1)
         return temp
 
-    def _getLEPT(self):
+    def _getLEPT(self,samplePoints=None):
         self.tDisplacementField = torch.matmul(self.tWeightVolume,
                                                self._getLogComponentTransforms())
         self.tDisplacementField = torch.reshape(self.tDisplacementField,
                                                 self.mLEPTImageDimensions_linear)
         self.tDisplacementField = torch.matrix_exp(self.tDisplacementField)
         self.tDisplacementField = torch.matmul(self.tViewTransform,self.tDisplacementField)
-        self.tDisplacementField = torch.einsum('bij,bjk->bik',
-                                               self.tDisplacementField,self.tSamplePoints)
+        if samplePoints == None:
+            self.tDisplacementField = torch.einsum('bij,bjk->bik',
+                                                   self.tDisplacementField,self.tSamplePoints)
+        else:
+            self.tDisplacementField = torch.einsum('bij,bjk->bik',
+                                                   self.tDisplacementField, samplePoints)
         self.tDisplacementField.squeeze()
         self.tDisplacementField = torch.div(self.tDisplacementField,
                                             self.tDisplacementField[:,self.mNDims,None])[:,:self.mNDims]
         return torch.reshape(self.tDisplacementField, self.mDisplacementFieldDimensions).unsqueeze(0)
+
+    def _getLoss_Rigidity(self):
+        transforms = self._getLogComponentTransforms()
+        transforms = torch.matrix_exp(torch.reshape(transforms,
+                                                   (self.mNumComponents,
+                                                    self.mNDims + 1,
+                                                    self.mNDims + 1)))
+        transforms = transforms[:,0:3,0:3]
+        sum = 0.0
+        for i in range(self.mNumComponents):
+            RRT = torch.sub(torch.matmul(transforms[i], transforms[i].T), torch.eye(3, device='cuda'))
+            RTR = torch.sub(torch.matmul(transforms[i].T, transforms[i]), torch.eye(3, device='cuda'))
+            Rdet = torch.det(transforms[i]) - 1.0
+            sum += torch.frobenius_norm(RRT) + torch.frobenius_norm(RTR) + Rdet
+        return sum
 
     def forward(self):
         self.tDisplacementField = self._getLEPT()

@@ -110,7 +110,7 @@ class Polyrigid(nn.Module):
         vCommowickWeights = {}
         for label, segmentation in componentSegmentations.items():
             vCommowickWeights[label] = self._getRegionWeight(segmentation, ratesOfDecay[label])
-        vSumImage = np.zeros(componentSegmentations[0].shape, dtype=np.float32)
+        vSumImage = np.zeros(componentSegmentations[next(iter(componentSegmentations))].shape, dtype=np.float32)
         for image in vCommowickWeights.values():
             vSumImage += image
         vNormalizedWeights = {}
@@ -121,7 +121,7 @@ class Polyrigid(nn.Module):
     def _getWeightVolume(self, segmentations: dict, weights: dict):
         self.tWeightVolume = np.zeros(self.mWeightImageDimensions,dtype=np.float32)
         temp = self._getWeightCommowick(segmentations,weights)
-        for i in range(self.mNumComponents):
+        for i in range(1,self.mNumComponents):
             self.tWeightVolume[:,:,:,i] = temp[i]
         return torch.tensor(self.tWeightVolume,requires_grad=False).cuda()
 

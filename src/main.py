@@ -68,12 +68,12 @@ vMaxItrs = [200]
 vUpdateRate = 10
 vItrHistory = {}
 vTestHistory = {}
-vNumComponents = 12
-vInFolder = "../images/input"
-vInFrame_Float = "frame_6"
-vInFrame_Target = "frame_5"
-vOutFile = "../images/results"
-vDate = "20220314"
+vNumComponents = 15
+vInFolder = "../images/input/rave/"
+vInFrame_Float = "iso_frame_6"
+vInFrame_Target = "iso_frame_5"
+vOutFile = "../images/results/"
+vDate = "20220408"
 vLambda = [1.0]
 vAlpha = [0.0]
 
@@ -88,13 +88,13 @@ for pMaxItrs in vMaxItrs:
                     os.makedirs(os.path.join(vOutFile,vDate))
 
                 # SECTION 2: READING IN IMAGE DATA
-                imgSITK_moving = sitk.ReadImage(vInFolder+vInFrame_Float+'/'+vInFrame_Float+".nii")
-                imgMoving = utils.normalizeImage(sitk.GetArrayFromImage(imgSITK_moving))
+                imgSITK_moving = sitk.ReadImage(vInFolder+vInFrame_Float+".nii")
+                imgMoving = utils.normalizeImage(sitk.GetArrayFromImage(imgSITK_moving)[23:53,60:160,50:150])
                 tImgMoving = torch.tensor(imgMoving, dtype=torch.float32)
                 tImgMoving = tImgMoving.unsqueeze(0).unsqueeze(0).cuda()
 
-                imgSITK_target = sitk.ReadImage(vInFolder+vInFrame_Target+'/'+vInFrame_Target+".nii")
-                imgTarget = utils.normalizeImage(sitk.GetArrayFromImage(imgSITK_target))
+                imgSITK_target = sitk.ReadImage(vInFolder+vInFrame_Target+".nii")
+                imgTarget = utils.normalizeImage(sitk.GetArrayFromImage(imgSITK_target)[23:53,60:160,50:150])
                 tImgTarget = torch.tensor(imgTarget, dtype=torch.float32)
                 tImgTarget = tImgTarget.unsqueeze(0).unsqueeze(0).cuda()
 
@@ -105,12 +105,12 @@ for pMaxItrs in vMaxItrs:
                 aComponentWeightValues = {}
                 aComponentSegmentations_Target = {}
 
-                for i in range(vNumComponents):
-                    temp = sitk.ReadImage(vInFolder+vInFrame_Float+'/'+vInFrame_Float+"_seg_comp_"+str(i)+".nii.gz")
-                    aComponentSegmentations_Float[i] = sitk.GetArrayFromImage(temp)
+                for i in range(1,vNumComponents):
+                    temp = sitk.ReadImage(vInFolder+vInFrame_Float+"_seg_"+str(i)+".nii.gz")
+                    aComponentSegmentations_Float[i] = sitk.GetArrayFromImage(temp)[23:53,60:160,50:150]
 
-                    temp = sitk.ReadImage(vInFolder+vInFrame_Target+'/'+vInFrame_Target+"_seg_comp_"+str(i)+".nii.gz")
-                    aComponentSegmentations_Target[i] = sitk.GetArrayFromImage(temp)
+                    temp = sitk.ReadImage(vInFolder+vInFrame_Target+"_seg_"+str(i)+".nii.gz")
+                    aComponentSegmentations_Target[i] = sitk.GetArrayFromImage(temp)[23:53,60:160,50:150]
 
                 for idx,img in aComponentSegmentations_Float.items():
                     aComponentSegmentations_Float[idx] = utils.normalizeImage(img)
@@ -363,7 +363,7 @@ for pMaxItrs in vMaxItrs:
                     print(f"Percentage of Jacobian determinants negative by SITK: " +
                           f"{(vNumNeg_LapIRN / (np.prod(model.mImageDimensions)) * 100):.2f}%", file=out)
                     print("Final parameter Estimations:\n",file=out)
-                    for i in range(vNumComponents):
+                    for i in range(0,vNumComponents-1):
                         aCompTransforms = model._getLogComponentTransforms()
                         print("Component transformation "+str(i),file=out)
                         transform = torch.matrix_exp(torch.reshape(aCompTransforms[i],

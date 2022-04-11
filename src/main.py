@@ -54,10 +54,12 @@ import utilities as utils
 from sklearn.metrics import f1_score
 import Polyrigid as pr
 
+
 def get_model(imgFloating: torch.tensor, componentSegmentations: dict,
-              componentWeights: dict, learningRate: float=0.005):
+              componentWeights: dict, learningRate: float = 0.005):
     model = pr.Polyrigid(imgFloating, componentSegmentations, componentWeights).to('cuda')
     return model, torch.optim.Adam(model.parameters(), learningRate)
+
 
 # SECTION 1: Model Parameters
 # vMaxItrs and vLambda may be set to list objects in order to run
@@ -67,312 +69,279 @@ vStep_Size = [0.01]
 vMaxItrs = [200]
 vUpdateRate = 10
 vItrHistory = {}
-vTestHistory = {}
+vLongNegJDHistory = {}
+vLongLossHistory = {}
+vLongRigidityScores = {}
+vLongRelativeDice = {}
 vNumComponents = 15
 vInFolder = "../images/input/rave/"
 vInFrame_Float = "iso_frame_6"
 vInFrame_Target = "iso_frame_5"
 vOutFile = "../images/results/"
-vDate = "20220408"
-vLambda = [1.0]
-vAlpha = [0.0]
+vDate = "20220410"
+vBeta = [1.0]  # 0.0 for full Jdet, 1.0 for full smoothness
+vAlpha = [0.0]  # on/off for disp field regularization
+vGamma = [0.01] # [0,1] for rigid transformation estimation
+vDelta = [0.5]
 
 for pMaxItrs in vMaxItrs:
-    for pLamda in vLambda:
+    for pBeta in vBeta:
         for pAlpha in vAlpha:
-            for pStepSize in vStep_Size:
-                if not os.path.exists(vOutFile):
-                    os.makedirs(vOutFile)
+            for pGamma in vGamma:
+                for pDelta in vDelta:
+                    for pStepSize in vStep_Size:
+                        vCurrTestKey = pGamma
 
-                if not os.path.exists(os.path.join(vOutFile,vDate)):
-                    os.makedirs(os.path.join(vOutFile,vDate))
+                        if not os.path.exists(vOutFile):
+                            os.makedirs(vOutFile)
 
-                # SECTION 2: READING IN IMAGE DATA
-                imgSITK_moving = sitk.ReadImage(vInFolder+vInFrame_Float+".nii")
-                imgMoving = utils.normalizeImage(sitk.GetArrayFromImage(imgSITK_moving)[23:53,60:160,50:150])
-                tImgMoving = torch.tensor(imgMoving, dtype=torch.float32)
-                tImgMoving = tImgMoving.unsqueeze(0).unsqueeze(0).cuda()
+                        if not os.path.exists(os.path.join(vOutFile, vDate)):
+                            os.makedirs(os.path.join(vOutFile, vDate))
 
-                imgSITK_target = sitk.ReadImage(vInFolder+vInFrame_Target+".nii")
-                imgTarget = utils.normalizeImage(sitk.GetArrayFromImage(imgSITK_target)[23:53,60:160,50:150])
-                tImgTarget = torch.tensor(imgTarget, dtype=torch.float32)
-                tImgTarget = tImgTarget.unsqueeze(0).unsqueeze(0).cuda()
+                        # SECTION 2: READING IN IMAGE DATA
+                        imgSITK_moving = sitk.ReadImage(vInFolder + vInFrame_Float + ".nii")
+                        imgMoving = utils.normalizeImage(sitk.GetArrayFromImage(imgSITK_moving)[10:70, 60:160, 50:150])
+                        tImgMoving = torch.tensor(imgMoving, dtype=torch.float32)
+                        tImgMoving = tImgMoving.unsqueeze(0).unsqueeze(0).cuda()
 
-                assert imgMoving.shape == imgTarget.shape, \
-                    "Images must be of the same dimensions. Got %s != %s"%(imgMoving.shape,imgTarget.shape)
+                        imgSITK_target = sitk.ReadImage(vInFolder + vInFrame_Target + ".nii")
+                        imgTarget = utils.normalizeImage(sitk.GetArrayFromImage(imgSITK_target)[10:70, 60:160, 50:150])
+                        tImgTarget = torch.tensor(imgTarget, dtype=torch.float32)
+                        tImgTarget = tImgTarget.unsqueeze(0).unsqueeze(0).cuda()
 
-                aComponentSegmentations_Float = {}
-                aComponentWeightValues = {}
-                aComponentSegmentations_Target = {}
+                        assert imgMoving.shape == imgTarget.shape, \
+                            "Images must be of the same dimensions. Got %s != %s" % (imgMoving.shape, imgTarget.shape)
 
-                for i in range(1,vNumComponents):
-                    temp = sitk.ReadImage(vInFolder+vInFrame_Float+"_seg_"+str(i)+".nii.gz")
-                    aComponentSegmentations_Float[i] = sitk.GetArrayFromImage(temp)[23:53,60:160,50:150]
+                        aComponentSegmentations_Float = {}
+                        aComponentWeightValues = {}
+                        aComponentSegmentations_Target = {}
 
-                    temp = sitk.ReadImage(vInFolder+vInFrame_Target+"_seg_"+str(i)+".nii.gz")
-                    aComponentSegmentations_Target[i] = sitk.GetArrayFromImage(temp)[23:53,60:160,50:150]
+                        for i in range(1, vNumComponents):
+                            temp = sitk.ReadImage(vInFolder + vInFrame_Float + "_seg_" + str(i) + ".nii.gz")
+                            aComponentSegmentations_Float[i] = sitk.GetArrayFromImage(temp)[10:70, 60:160, 50:150]
 
-                for idx,img in aComponentSegmentations_Float.items():
-                    aComponentSegmentations_Float[idx] = utils.normalizeImage(img)
+                            temp = sitk.ReadImage(vInFolder + vInFrame_Target + "_seg_" + str(i) + ".nii.gz")
+                            aComponentSegmentations_Target[i] = sitk.GetArrayFromImage(temp)[10:70, 60:160, 50:150]
 
-                for idx, img in aComponentSegmentations_Float.items():
-                    aComponentWeightValues[idx] = 1/2
+                        for idx, img in aComponentSegmentations_Float.items():
+                            aComponentSegmentations_Float[idx] = utils.normalizeImage(img)
 
-                model, optimizer = get_model(tImgMoving,aComponentSegmentations_Float,
-                                             aComponentWeightValues,learningRate=pStepSize)
+                        for idx, img in aComponentSegmentations_Float.items():
+                            aComponentWeightValues[idx] = pDelta
 
-                tComponentSegImg_Target = np.zeros(model.mImageDimensions)
-                for img in aComponentSegmentations_Target.values():
-                    tComponentSegImg_Target += img
-                tComponentSegImg_Target = torch.tensor(tComponentSegImg_Target, dtype=torch.float32).cuda()
+                        model, optimizer = get_model(tImgMoving, aComponentSegmentations_Float,
+                                                     aComponentWeightValues, learningRate=pStepSize)
 
-                # STEP 7: ITERATION TOWARDS OPTIMIZATION
-                print("Running with Smoothness Parameter " + str(pLamda)
-                      + " and JD Regularization parameter " + str(1.0 - pLamda))
-                print("Running model for maximum of " + str(pMaxItrs) + " iterations.")
-                for itr in range(pMaxItrs):
-                    optimizer.zero_grad()
+                        tComponentSegImg_Target = np.zeros(model.mImageDimensions)
+                        for img in aComponentSegmentations_Target.values():
+                            tComponentSegImg_Target += img
+                        tComponentSegImg_Target = torch.tensor(tComponentSegImg_Target, dtype=torch.float32).cuda()
 
-                    tImgWarped = model.forward()
-                    tImgFixed = 1.0 * tImgTarget
+                        # STEP 7: ITERATION TOWARDS OPTIMIZATION
+                        print("Running with Smoothness Parameter " + str(pBeta)
+                              + " and JD Regularization parameter " + str(1.0 - pBeta))
+                        print("Running model for maximum of " + str(pMaxItrs) + " iterations.")
+                        for itr in range(pMaxItrs):
+                            optimizer.zero_grad()
 
-                    reg_loss = utils._getMetricMSE(tImgWarped, tImgFixed)
-                    #reg_loss = -utils._getMetricNCC(tImgWarped, tImgFixed)
-                    smooth_loss = pAlpha * pLamda * utils._loss_Smooth(model.tDisplacementField)
-                    jdet_loss = pAlpha * (1-pLamda) * utils._loss_JDet(model.tDisplacementField)
-                    rigid_loss = model._getLoss_Rigidity()
-                    loss = reg_loss + 0.3 * rigid_loss #+ smooth_loss + jdet_loss
+                            tImgWarped = model.forward()
+                            tImgFixed = 1.0 * tImgTarget
 
-                    # Calculate gradients wrt parameters
-                    loss.backward()
+                            reg_loss = utils._getMetricMSE(tImgWarped, tImgFixed)
+                            # reg_loss = -utils._getMetricNCC(tImgWarped, tImgFixed)
+                            smooth_loss = pAlpha * pBeta * utils._loss_Smooth(model.tDisplacementField)
+                            jdet_loss = pAlpha * (1 - pBeta) * utils._loss_JDet(model.tDisplacementField)
+                            rigid_loss = model._getLoss_Rigidity()
+                            loss = reg_loss + pGamma * rigid_loss  # + smooth_loss + jdet_loss
 
-                    # Update parameters based on gradients
-                    optimizer.step()
-                    vItrHistory[itr] = loss.item()
+                            # Calculate gradients wrt parameters
+                            loss.backward()
 
-                    # check for exit conditions.  Still not clear on what constitutes provable convergence.
+                            # Update parameters based on gradients
+                            optimizer.step()
+                            vItrHistory[itr] = loss.item()
 
-                    if itr % vUpdateRate == 0:
-                       print(
-                           "Itr: {}, Total {} Reg {} Smooth {} Jdet {}".format(
-                               itr, loss.item(), reg_loss.item(), smooth_loss.item(), jdet_loss.item(),
-                           )
-                       )
+                            # check for exit conditions.  Still not clear on what constitutes provable convergence.
 
-                    if abs(loss) < vStop_Loss:
-                        print("Model converged at iteration ", itr, " with loss score ", loss)
-                        break
+                            if itr % vUpdateRate == 0:
+                                print(
+                                    "Itr: {}, Total {} Reg {} Smooth {} Jdet {}".format(
+                                        itr, loss.item(), reg_loss.item(), smooth_loss.item(), jdet_loss.item(),
+                                    )
+                                )
 
-                    if itr > 10:
-                        if abs((loss + vItrHistory[itr-1] + vItrHistory[itr-2 ]) / 3.0) < 1e-5:
-                            print("Model growth slowed at iteration", itr, "with loss score ", loss)
-                            break
+                            if abs(loss) < vStop_Loss:
+                                print("Model converged at iteration ", itr, " with loss score ", loss)
+                                break
 
-                # SECTION 8: MODEL OUTPUT
-                # The below sections produce results from the run of the model and put them in the specified
-                # output folder.  Starts with establishing a folder based on the current model parameters then
-                # outputs all output into that folder.
+                            if itr > 10:
+                                if abs((loss + vItrHistory[itr - 1] + vItrHistory[itr - 2]) / 3.0) < 1e-5:
+                                    print("Model growth slowed at iteration", itr, "with loss score ", loss)
+                                    break
 
-                str_smooth = str(pLamda).replace('.','_')
-                str_JD = str(1.0-pLamda).replace('.','_')
-                str_itrs = str(pMaxItrs)
-                str_lr = str(pStepSize).replace('.','_')
-                str_alph = str(pAlpha).replace('.','_')
+                        # SECTION 8: MODEL OUTPUT
+                        # The below sections produce results from the run of the model and put them in the specified
+                        # output folder.  Starts with establishing a folder based on the current model parameters then
+                        # outputs all output into that folder.
 
-                vSubFolder = "/obj_" + str(vNumComponents) + "_itrs_" + str_itrs + "_Alph_" + str_alph + "_sm_" + str_smooth + "_JD_" + str_JD + "_lr_" + str_lr
-                vOutPath = vOutFile + vDate + vSubFolder
+                        str_smooth = str(pBeta).replace('.', '_')
+                        str_JD = str(1.0 - pBeta).replace('.', '_')
+                        str_itrs = str(pMaxItrs)
+                        str_lr = str(pStepSize).replace('.', '_')
+                        str_alph = str(pAlpha).replace('.', '_')
 
-                if not os.path.exists(vOutPath):
-                    os.makedirs(vOutPath)
+                        vSubFolder = "/obj_" + str(
+                            vNumComponents) + "_itrs_" + str_itrs + "_Alph_" + str_alph + "_sm_" + str_smooth + "_JD_" + str_JD + "_lr_" + str_lr
+                        vOutPath = vOutFile + vDate + vSubFolder
 
-                tImgWarped_Seg = F.grid_sample(model.tImgSegmentation,
-                                               model.tDisplacementField,
-                                               mode='nearest', padding_mode='zeros', align_corners=False)
+                        if not os.path.exists(vOutPath):
+                            os.makedirs(vOutPath)
 
-                utils.pltImage(tImgMoving.detach().squeeze().cpu().numpy()[tImgMoving.shape[2]//2, :, :],
-                               title="Moving Image",toShow=False,toSave=True,outPath=vOutPath,outFile="/img_moving.png")
+                        tImgWarped_Seg = F.grid_sample(model.tImgSegmentation,
+                                                       model.tDisplacementField,
+                                                       mode='nearest', padding_mode='zeros', align_corners=False)
 
-                plt.imshow(tImgMoving.detach().squeeze().cpu().numpy()[tImgMoving.shape[2]//2, :, :],cmap='gray')
-                plt.title("Moving Image")
-                plt.axis('off')
-                plt.savefig(vOutPath + "/img_moving.png", bbox_inches='tight')
-                #plt.show()
-                plt.close()
+                        data = sorted(vItrHistory.items())
+                        x, y = zip(*data)
+                        fig = plt.plot(x, y, marker=".", markersize=10)
+                        plt.title("Loss by Iterations")
+                        # plt.ylim(-1.0,0.0)
+                        plt.savefig(vOutPath + "/plot_NCC.png", bbox_inches='tight')
+                        # plt.show()
+                        plt.close()
 
-                plt.imshow(tImgWarped.detach().squeeze().cpu().numpy()[tImgWarped.shape[2]//2, :, :],cmap='gray')
-                plt.title("Warped Image")
-                plt.axis('off')
-                plt.savefig(vOutPath + "/img_warped.png", bbox_inches='tight')
-                #plt.show()
-                plt.close()
+                        tImgWarped = \
+                            sitk.GetImageFromArray(tImgWarped.detach().squeeze().cpu().numpy(), False)
+                        sitk.WriteImage(tImgWarped, vOutPath + "/nii_warped.nii")
+                        tImgWarped = sitk.GetArrayFromImage(tImgWarped)
 
-                plt.imshow(tImgTarget.squeeze().cpu().numpy()[tImgTarget.shape[2]//2, :, :],cmap='gray')
-                plt.title("Target Image")
-                plt.axis('off')
-                plt.savefig(vOutPath + "/img_target.png", bbox_inches='tight')
-                #plt.show()
-                plt.close()
+                        vDICE_Before = \
+                            f1_score(tComponentSegImg_Target.detach().cpu().numpy().reshape(-1, 1),
+                                     model.tImgSegmentation.detach().cpu().numpy().reshape(-1, 1), average='macro')
+                        vDICE_After = \
+                            f1_score(tComponentSegImg_Target.detach().cpu().numpy().reshape(-1, 1),
+                                     tImgWarped_Seg.detach().cpu().view((-1, 1)).numpy(), average="macro")
 
-                data = sorted(vItrHistory.items())
-                x,y = zip(*data)
-                fig = plt.plot(x,y,marker =".",markersize=10)
-                plt.title("Loss by Iterations")
-                #plt.ylim(-1.0,0.0)
-                plt.savefig(vOutPath + "/plot_NCC.png", bbox_inches='tight')
-                #plt.show()
-                plt.close()
+                        tComponentSegImg_Float = \
+                            sitk.GetImageFromArray(model.tImgSegmentation.detach().cpu().numpy(), False)
+                        sitk.WriteImage(tComponentSegImg_Float, vOutPath + "/nii_float_seg.nii")
+                        tComponentSegImg_Float = sitk.GetArrayFromImage(tComponentSegImg_Float)
 
-                tImgWarped = \
-                    sitk.GetImageFromArray(tImgWarped.detach().squeeze().cpu().numpy(),False)
-                sitk.WriteImage(tImgWarped, vOutPath + "/nii_warped.nii")
-                tImgWarped = sitk.GetArrayFromImage(tImgWarped)
+                        tImgWarped_Seg = \
+                            sitk.GetImageFromArray(tImgWarped_Seg.detach().squeeze().cpu().numpy(), False)
+                        sitk.WriteImage(tImgWarped_Seg, vOutPath + "/nii_warped_seg.nii")
 
-                vDICE_Before = \
-                    f1_score(tComponentSegImg_Target.detach().cpu().numpy().reshape(-1,1),
-                             model.tImgSegmentation.detach().cpu().numpy().reshape(-1,1),average='macro')
-                vDICE_After = \
-                    f1_score(tComponentSegImg_Target.detach().cpu().numpy().reshape(-1,1),
-                             tImgWarped_Seg.detach().cpu().view((-1,1)).numpy(),average="macro")
+                        tComponentSegImg_Target = \
+                            sitk.GetImageFromArray(tComponentSegImg_Target.detach().cpu().numpy(), False)
+                        sitk.WriteImage(tComponentSegImg_Target, vOutPath + "/nii_target_seg.nii")
+                        tComponentSegImg_Target = sitk.GetArrayFromImage(tComponentSegImg_Target)
 
-                tComponentSegImg_Float = \
-                    sitk.GetImageFromArray(model.tImgSegmentation.detach().cpu().numpy(),False)
-                sitk.WriteImage(tComponentSegImg_Float, vOutPath + "/nii_float_seg.nii")
-                tComponentSegImg_Float = sitk.GetArrayFromImage(tComponentSegImg_Float)
+                        # Due to the Grid Sample coordinate system scaling, we need to evaluate
+                        # The DVF on a synthetic point system.  This is scaled to the original
+                        # volume dimensions and gives gradient information in expected values.
+                        # We use a custom function for JDet taken from the LapriMRI github repository.
+                        # The results were validated with a built-in calculation in SITK.
+                        tSamplePoints_Depth = torch.linspace(0, 20, steps=model.mImageDimensions[2])
+                        tSamplePoints_Height = torch.linspace(0, 200, steps=model.mImageDimensions[3])
+                        tSamplePoints_Width = torch.linspace(0, 200, steps=model.mImageDimensions[4])
+                        tSamplePoints = torch.cartesian_prod(tSamplePoints_Depth,
+                                                             tSamplePoints_Height,
+                                                             tSamplePoints_Width)
+                        tOnes = torch.ones(np.prod(model.mImageDimensions), dtype=torch.float32)
+                        tSamplePoints = torch.cat((tSamplePoints, tOnes.unsqueeze(-1)), dim=1).unsqueeze(-1).cuda()
+                        tTestDVF = model._getLEPT(tSamplePoints)
 
-                tImgWarped_Seg = \
-                    sitk.GetImageFromArray(tImgWarped_Seg.detach().squeeze().cpu().numpy(),False)
-                sitk.WriteImage(tImgWarped_Seg, vOutPath + "/nii_warped_seg.nii")
+                        tDeterminantMap = utils.jacobian_determinant_3d(tTestDVF)
+                        tDeterminantMap = tDeterminantMap.detach().squeeze().cpu().numpy()
+                        vNumNeg = (tDeterminantMap <= 0.0).sum()
+                        print("Num neg dets: ", vNumNeg)
+                        vLongNegJDHistory[vCurrTestKey] = vNumNeg
+                        vLongLossHistory[vCurrTestKey] = loss.item()
+                        vLongRelativeDice[vCurrTestKey] = vDICE_After - vDICE_Before
 
-                tComponentSegImg_Target = \
-                    sitk.GetImageFromArray(tComponentSegImg_Target.detach().cpu().numpy(),False)
-                sitk.WriteImage(tComponentSegImg_Target, vOutPath + "/nii_target_seg.nii")
-                tComponentSegImg_Target = sitk.GetArrayFromImage(tComponentSegImg_Target)
-        
-                tDeterminantMap = utils.jacobian_determinant_3d(model.tDisplacementField)
-                tDeterminantMap = tDeterminantMap.detach().squeeze().cpu().numpy()
-                tDeterminantMap = tDeterminantMap
+                        # Here we output the log of the determinant map to visualize contraction
+                        # and expansion more easily.  We assume that there is a low percentage
+                        # of non-invertable points.
+                        tDeterminantMap = sitk.GetImageFromArray(np.log(tDeterminantMap), False)
+                        sitk.WriteImage(tDeterminantMap, vOutPath + "/nii_determinant.nii")
 
-                sitkDisplacementField = sitk.GetImageFromArray(model.tDisplacementField.detach().squeeze().cpu().numpy(),
-                                                               isVector=True)
-                tJacDetVerification = sitk.DisplacementFieldJacobianDeterminant(sitkDisplacementField)
-                npDeterminantMap = sitk.GetArrayFromImage(tJacDetVerification)
+                        vItrRigidityScores = []
+                        with open(vOutPath + "/res_transforms.txt", "w") as out:
+                            print(f"MaxIterations: {pMaxItrs}", file=out)
+                            print(f"Learning Rate: {pStepSize}", file=out)
+                            print(f"Smoothness Parameter: {pAlpha * pBeta}", file=out)
+                            print(f"Jacobian Regularization Parameter: {pAlpha * (1.0 - pBeta)}", file=out)
+                            print(f"DICE score before registration: {vDICE_Before:.4f}", file=out)
+                            print(f"DICE score after registration: {vDICE_After:.4f}", file=out)
+                            print(f"Target Loss: {vStop_Loss:.4f}", file=out)
+                            print(f"Loss achieved: {loss:.4f}", file=out)
+                            print(f"Percentage of Jacobian determinants negative: " +
+                                  f"{(vNumNeg/ (np.prod(model.mImageDimensions)) * 100):.2f}%", file=out)
+                            print("Final parameter Estimations:\n", file=out)
+                            for i in range(0, 8):
+                                aCompTransforms = model._getLogComponentTransforms()
+                                print("Component " + str(i+1), file=out)
+                                transform = torch.matrix_exp(torch.reshape(aCompTransforms[i],
+                                                                           (model.mNDims + 1, model.mNDims + 1)))
+                                transform = transform[0:3, 0:3]
+                                RRT = torch.sub(torch.matmul(transform, transform.T), torch.eye(3, device='cuda'))
+                                RTR = torch.sub(torch.matmul(transform.T, transform), torch.eye(3, device='cuda'))
+                                Rdet = torch.det(transform) - 1.0
+                                rigidity = torch.frobenius_norm(RRT) + torch.frobenius_norm(RTR) + Rdet
+                                vItrRigidityScores.append(rigidity.item())
+                                print("Rigidity Score: ", rigidity.item(), file=out)
+                                print(torch.matrix_exp(torch.reshape(aCompTransforms[i],
+                                                                     (model.mNDims + 1, model.mNDims + 1))), file=out)
 
-                vLim = int
-                if abs(tDeterminantMap.min()) >= abs(tDeterminantMap.max()):
-                    vLim = tDeterminantMap.min()
-                else:
-                    vLim = tDeterminantMap.max()
+                        vLongRigidityScores[vCurrTestKey] = np.mean(vItrRigidityScores)
 
-                for i in range(tDeterminantMap.shape[0]):
-                    fig = plt.figure()
-                    plt.title("LapIRN Determinant Map For Volume Slice "+str(i))
-                    im = plt.imshow(tDeterminantMap[i,:,:])#,cmap='bwr_r')
-                    #plt.clim(-vLim,vLim)
-                    plt.axis('off')
-                    fig.colorbar(im)
-                    plt.savefig(vOutPath + "/img_LapIRN_det_small_slice_" + str(i) + ".png", bbox_inches='tight')
-                    #plt.show()
-                    plt.close()
+data = sorted(vLongNegJDHistory.items())
+x, y = zip(*data)
+fig, ax1 = plt.subplots()
+ax1.plot(x, y, marker=".", markersize=10, color='tab:blue')
+ax1.set_ylabel("Num. Vector Displacements with Neg. Determinant")
+ax1.set_xlabel("Signal Gain of Rigidity Regularization")
+ax1.tick_params(axis='y', labelcolor='tab:blue')
 
-                if abs(npDeterminantMap.min()) >= abs(npDeterminantMap.max()):
-                    vLim = npDeterminantMap.min()
-                else:
-                    vLim = npDeterminantMap.max()
+ax2 = ax1.twinx()
+data = sorted(vLongRigidityScores.items())
+x, y = zip(*data)
+ax2.set_ylabel("Mean Rigidity Score for Carpal Bone Transforms")
+ax2.plot(x, y, color='tab:red')
+ax2.tick_params(axis='y', labelcolor='tab:red')
+plt.savefig(vOutPath + "/plot_Rigid2negJD.png", bbox_inches='tight')
+plt.close()
 
-                for i in range(npDeterminantMap.shape[0]):
-                    fig = plt.figure()
-                    plt.title("SITK Determinant Map For Volume Slice "+str(i))
-                    im = plt.imshow(npDeterminantMap[i,:,:])#,cmap='bwr_r')
-                    #plt.clim(-vLim,vLim)
-                    plt.axis('off')
-                    fig.colorbar(im)
-                    plt.savefig(vOutPath + "/img_sitk_det_small_slice_" + str(i) + ".png", bbox_inches='tight')
-                    #plt.show()
-                    plt.close()
+data = sorted(vLongLossHistory.items())
+x, y = zip(*data)
+fig, ax1 = plt.subplots()
+ax1.plot(x, y, marker=".", markersize=10, color='tab:blue')
+ax1.set_ylabel("MSE Loss")
+ax1.set_xlabel("Signal Gain of Rigidity Regularization")
+ax1.tick_params(axis='y', labelcolor='tab:blue')
 
-                tSamplePoints_Depth = torch.linspace(0, 20, steps=model.mImageDimensions[2])
-                tSamplePoints_Height = torch.linspace(0, 200, steps=model.mImageDimensions[3])
-                tSamplePoints_Width = torch.linspace(0, 200, steps=model.mImageDimensions[4])
-                tSamplePoints = torch.cartesian_prod(tSamplePoints_Depth,
-                                                          tSamplePoints_Height,
-                                                          tSamplePoints_Width)
-                tOnes = torch.ones(np.prod(model.mImageDimensions), dtype=torch.float32)
-                tSamplePoints = torch.cat((tSamplePoints, tOnes.unsqueeze(-1)), dim=1).unsqueeze(-1).cuda()
+ax2 = ax1.twinx()
+data = sorted(vLongRigidityScores.items())
+x, y = zip(*data)
+ax2.set_ylabel("Mean Rigidity Score for Carpal Bone Transforms")
+ax2.plot(x, y, color='tab:red')
+ax2.tick_params(axis='y', labelcolor='tab:red')
+plt.savefig(vOutPath + "/plot_Rigid2Loss.png", bbox_inches='tight')
+plt.close()
 
-                tTestDVF = model._getLEPT(tSamplePoints)
+data = sorted(vLongRelativeDice.items())
+x, y = zip(*data)
+fig, ax1 = plt.subplots()
+ax1.plot(x, y, marker=".", markersize=10, color='tab:blue')
+ax1.set_ylabel("Change in DICE After Registration")
+ax1.set_xlabel("Signal Gain of Rigidity Regularization")
+ax1.tick_params(axis='y', labelcolor='tab:blue')
 
-                tDeterminantMap = utils.jacobian_determinant_3d(tTestDVF)
-                tDeterminantMap = tDeterminantMap.detach().squeeze().cpu().numpy()
-
-                sitkDisplacementField = sitk.GetImageFromArray(
-                    tTestDVF.detach().squeeze().cpu().numpy(),
-                    isVector=True)
-                tJacDetVerification = sitk.DisplacementFieldJacobianDeterminant(sitkDisplacementField)
-                npDeterminantMap = sitk.GetArrayFromImage(tJacDetVerification)
-
-                vLim = int
-                if abs(tDeterminantMap.min()) >= abs(tDeterminantMap.max()):
-                    vLim = tDeterminantMap.min()
-                else:
-                    vLim = tDeterminantMap.max()
-
-                for i in range(tDeterminantMap.shape[0]):
-                    fig = plt.figure()
-                    plt.title("LapIRN Determinant Map For Volume Slice " + str(i))
-                    im = plt.imshow(tDeterminantMap[i, :, :])  # ,cmap='bwr_r')
-                    # plt.clim(-vLim,vLim)
-                    plt.axis('off')
-                    fig.colorbar(im)
-                    plt.savefig(vOutPath + "/img_LapIRN_det_large_slice_" + str(i) + ".png", bbox_inches='tight')
-                    # plt.show()
-                    plt.close()
-
-                if abs(npDeterminantMap.min()) >= abs(npDeterminantMap.max()):
-                    vLim = npDeterminantMap.min()
-                else:
-                    vLim = npDeterminantMap.max()
-
-                for i in range(npDeterminantMap.shape[0]):
-                    fig = plt.figure()
-                    plt.title("SITK Determinant Map For Volume Slice " + str(i))
-                    im = plt.imshow(npDeterminantMap[i, :, :])  # ,cmap='bwr_r')
-                    # plt.clim(-vLim,vLim)
-                    plt.axis('off')
-                    fig.colorbar(im)
-                    plt.savefig(vOutPath + "/img_sitk_det_large_slice_" + str(i) + ".png", bbox_inches='tight')
-                    # plt.show()
-                    plt.close()
-
-                vNumNeg_LapIRN = (tDeterminantMap <= 0.0).sum()
-                vNumNeg_SITK = (npDeterminantMap <= 0.0).sum()
-
-                tDeterminantMap = sitk.GetImageFromArray(tDeterminantMap,False)
-                sitk.WriteImage(tDeterminantMap, vOutPath + "/nii_determinant.nii")
-
-                with open(vOutPath + "/res_transforms.txt", "w") as out:
-                    print(f"MaxIterations: {pMaxItrs}",file=out)
-                    print(f"Learning Rate: {pStepSize}",file=out)
-                    print(f"Smoothness Parameter: {pAlpha*pLamda}",file=out)
-                    print(f"Jacobian Regularization Parameter: {pAlpha*(1.0-pLamda)}",file=out)
-                    print(f"DICE score before registration: {vDICE_Before:.4f}",file=out)
-                    print(f"DICE score after registration: {vDICE_After:.4f}",file=out)
-                    print(f"Target Loss: {vStop_Loss:.4f}",file=out)
-                    print(f"Loss achieved: {loss:.4f}",file=out)
-                    print(f"Percentage of Jacobian determinants negative by LapIRN: "+
-                          f"{(vNumNeg_LapIRN/(np.prod(model.mImageDimensions))*100):.2f}%",file=out)
-                    print(f"Percentage of Jacobian determinants negative by SITK: " +
-                          f"{(vNumNeg_LapIRN / (np.prod(model.mImageDimensions)) * 100):.2f}%", file=out)
-                    print("Final parameter Estimations:\n",file=out)
-                    for i in range(0,vNumComponents-1):
-                        aCompTransforms = model._getLogComponentTransforms()
-                        print("Component transformation "+str(i),file=out)
-                        transform = torch.matrix_exp(torch.reshape(aCompTransforms[i],
-                                                                   (model.mNDims+1,model.mNDims+1)))
-                        transform = transform[0:3,0:3]
-                        RRT = torch.sub(torch.matmul(transform, transform.T),torch.eye(3,device='cuda'))
-                        RTR = torch.sub(torch.matmul(transform.T,transform),torch.eye(3,device='cuda'))
-                        Rdet = torch.det(transform) - 1.0
-                        rigidity = torch.frobenius_norm(RRT) + torch.frobenius_norm(RTR) + Rdet
-                        print("Rigidity Score: ",rigidity.item(),file=out)
-                        print(torch.matrix_exp(torch.reshape(aCompTransforms[i],
-                                                             (model.mNDims+1,model.mNDims+1))),file=out)
+ax2 = ax1.twinx()
+data = sorted(vLongRigidityScores.items())
+x, y = zip(*data)
+ax2.set_ylabel("Mean Rigidity Score for Carpal Bone Transforms")
+ax2.plot(x, y, color='tab:red')
+ax2.tick_params(axis='y', labelcolor='tab:red')
+plt.savefig(vOutPath + "/plot_Rigid2DICE.png", bbox_inches='tight')
+plt.close()

@@ -2,7 +2,6 @@ import torch
 import numpy as np
 import SimpleITK as sitk
 import torchmaxflow as tmf
-import glob
 import os
 import re
 

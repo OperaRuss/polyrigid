@@ -70,8 +70,9 @@ class Polyrigid(nn.Module):
 
     def _getSegmentationImage(self,componentSegmentations):
         self.tImgSegmentation = np.zeros(self.mImageDimensions,dtype=np.float32)
-        for img in componentSegmentations.values():
-            self.tImgSegmentation += img
+        for label, img in componentSegmentations.items():
+            if 1 <= label <= 8:
+                self.tImgSegmentation += img
         return torch.tensor(self.tImgSegmentation,dtype=torch.float32).cuda()
 
     def _getSamplePoints(self):

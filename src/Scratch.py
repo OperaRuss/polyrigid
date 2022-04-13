@@ -1,60 +1,71 @@
-import torch
+import glob
+import os
 import numpy as np
-import SimpleITK as sitk
-import torchmaxflow as tmf
 import matplotlib.pyplot as plt
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print("Pytorch is using", device)
-print()
+fpResults = "../images/results"
 
-frame = 8
+fig, ax = plt.subplots(1,1)
+for file in sorted(glob.glob(fpResults+"/*")):
+    if os.path.isdir(file):
+        results = np.load(os.path.join(file, 'model_results.npz'))
+        label = results['target']
+        loss = np.load(os.path.join(file, 'model_loss.npz'))
+        temp = {}
+        for k,v in loss.items():
+            temp[int(k)] = v
 
-img = sitk.ReadImage('../images/input/rave/iso_frame_'+str(frame)+'.nii.gz',sitk.sitkFloat32)
-nImg = sitk.GetArrayFromImage(img)
+        x,y = zip(*sorted(temp.items()))
+        ax.plot(x,y,color='b')
+ax.set_title("MSE Loss for All Frames in Dynamic Sequence")
+ax.set_ylabel("MSE Loss")
+ax.set_xlabel("Iteration")
+plt.xticks(np.arange(0,201,20))
+plt.show()
+plt.savefig("../images/results/summary_MSE.png",bbox_inches='tight')
+plt.close()
 
-label = sitk.ReadImage('../images/input/rave/iso_frame_'+str(frame)+'_seg_binary.nii.gz',sitk.sitkFloat32)
-nLabel = sitk.GetArrayFromImage(label)
-fP = 0.5 + (nLabel - 0.5) * 0.8
-bP = 1.0 - fP
-Prob = np.asarray([bP, fP])
+finLoss = {}
+netDICE = {}
+percNegJDets = {}
+meanRigid = {}
 
-plt.imshow(fP[38,:,:])
+fig, axs = plt.subplots(2,2,figsize=(10,10)) # in clockwise from upper left: numNeg, netDICE, percentageNegJDets,meanRigidityScore
+for file in sorted(glob.glob(fpResults+"/*")):
+    if os.path.isdir(file):
+        results = np.load(os.path.join(file, 'model_results.npz'))
+        label = int(results['target'])
+        finLoss[label] = results['finalLoss']
+        netDICE[label] = results['netDICE']
+        percNegJDets[label] = results['percentageNegJDets']
+        meanRigid[label] = results['meanRigidityScore']
+
+x,y = zip(*sorted(finLoss.items()))
+axs[0,0].plot(x,y)
+axs[0,0].set(title="Final Loss Score Achieved")
+axs[0,0].set_xticks(np.arange(0,21,2))
+
+x,y = zip(*sorted(netDICE.items()))
+axs[0,1].plot(x,y)
+axs[0,1].set(title="Net DICE Gain")
+axs[0,1].set_xticks(np.arange(0,21,2))
+
+x,y = zip(*sorted(percNegJDets.items()))
+axs[1,0].plot(x,y)
+axs[1,0].set(title="% Neg JDets")
+axs[1,0].set_xticks(np.arange(0,21,2))
+
+x,y = zip(*sorted(meanRigid.items()))
+axs[1,1].plot(x,y)
+axs[1,1].set(title="Mean Rigidity Score")
+axs[1,1].set_xticks(np.arange(0,21,2))
+
+fig.suptitle("Final Evaluation Scores After Registration on All Frames")
+fig.tight_layout()
+fig.subplots_adjust(top=0.88)
+plt.savefig("../images/results/summary_metrics.png",bbox_inches='tight')
 plt.show()
 plt.close()
 
 
-plt.imshow(bP[38,:,:])
-plt.show()
-plt.close()
-
-lamda = [1.0,1.25]
-sigma = [1.0]
-
-
-
-tImg = torch.from_numpy(nImg).unsqueeze(0).unsqueeze(0)
-tLabel = torch.from_numpy(Prob).unsqueeze(0)
-
-plt.imshow(nLabel[38,:,:])
-plt.title("Original")
-plt.show()
-
-for lam in lamda:
-    for sig in sigma:
-        result = tmf.maxflow(tImg,tLabel,lam,sig).squeeze().cpu().numpy()
-
-        slice = 38
-
-        print(result.max(),result.min())
-        plt.imshow(result[slice,:,:])
-        plt.title("lamda: "+str(lam)+",sigma: "+str(sig))
-        plt.show()
-
-        out = sitk.GetImageFromArray(np.multiply(result,nLabel))
-        out.CopyInformation(img)
-        sitk.WriteImage(out,"../images/results/20220410/result_"+str(lam).replace('.','_')+"_"+str(sig).replace('.','_')+".nii")
-
-        print("lam: ",lam," sig: ",sig)
-        print("metric: ",np.linalg.norm(result - nLabel))
 

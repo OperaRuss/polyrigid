@@ -9,21 +9,19 @@ def getEvaluationPlots():
     fig, ax = plt.subplots(1,1)
     for file in sorted(glob.glob(fpResults+"/*")):
         if os.path.isdir(file):
-            results = np.load(os.path.join(file, 'model_results.npz'))
-            label = results['target']
             loss = np.load(os.path.join(file, 'model_loss.npz'))
             temp = {}
             for k,v in loss.items():
                 temp[int(k)] = v
 
             x,y = zip(*sorted(temp.items()))
-            ax.plot(x,y,color='b')
+            ax.plot(x,y,color='k')
     ax.set_title("MSE Loss for All Frames in Dynamic Sequence")
     ax.set_ylabel("MSE Loss")
     ax.set_xlabel("Iteration")
-    plt.xticks(np.arange(0,201,20))
-    plt.show()
+    plt.xticks(np.arange(0,len(y)+1,20))
     plt.savefig("../images/results/summary_MSE.png",bbox_inches='tight')
+    plt.show()
     plt.close()
 
     finLoss = {}
@@ -42,22 +40,22 @@ def getEvaluationPlots():
             meanRigid[label] = results['meanRigidityScore']
 
     x,y = zip(*sorted(finLoss.items()))
-    axs[0,0].plot(x,y)
+    axs[0,0].plot(x,y,'-ok')
     axs[0,0].set(title="Final Loss Score Achieved")
     axs[0,0].set_xticks(np.arange(0,21,2))
 
     x,y = zip(*sorted(netDICE.items()))
-    axs[0,1].plot(x,y)
+    axs[0,1].plot(x,y,'-ok')
     axs[0,1].set(title="Net DICE Gain")
     axs[0,1].set_xticks(np.arange(0,21,2))
 
     x,y = zip(*sorted(percNegJDets.items()))
-    axs[1,0].plot(x,y)
+    axs[1,0].plot(x,y,'-ok')
     axs[1,0].set(title="% Neg JDets")
     axs[1,0].set_xticks(np.arange(0,21,2))
 
     x,y = zip(*sorted(meanRigid.items()))
-    axs[1,1].plot(x,y)
+    axs[1,1].plot(x,y,'-ok')
     axs[1,1].set(title="Mean Rigidity Score")
     axs[1,1].set_xticks(np.arange(0,21,2))
 

@@ -3,7 +3,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-def getEvaluationPlots():
+def getEvaluationPlots(params:str=None):
     fpResults = "../images/results"
 
     fig, ax = plt.subplots(1,1)
@@ -20,7 +20,10 @@ def getEvaluationPlots():
     ax.set_ylabel("MSE Loss")
     ax.set_xlabel("Iteration")
     plt.xticks(np.arange(0,len(y)+1,20))
-    plt.savefig("../images/results/summary_MSE.png",bbox_inches='tight')
+    if params is not None:
+        plt.savefig("../images/results/summary_MSE"+params+".png",bbox_inches='tight')
+    else:
+        plt.savefig("../images/results/summary_MSE.png",bbox_inches='tight')
     plt.show()
     plt.close()
 
@@ -62,7 +65,10 @@ def getEvaluationPlots():
     fig.suptitle("Final Evaluation Scores After Registration on All Frames")
     fig.tight_layout()
     fig.subplots_adjust(top=0.88)
-    plt.savefig("../images/results/summary_metrics.png",bbox_inches='tight')
+    if params is not None:
+        plt.savefig("../images/results/summary_metrics"+params+".png",bbox_inches='tight')
+    else:
+        plt.savefig("../images/results/summary_metrics.png", bbox_inches='tight')
     plt.show()
     plt.close()
 

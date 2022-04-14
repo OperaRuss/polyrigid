@@ -6,6 +6,7 @@ start date 20220220
 
 import os
 import glob
+import random
 import SimpleITK as sitk
 import numpy as np
 import torch
@@ -29,7 +30,7 @@ def get_model(imgFloating: torch.tensor, componentSegmentations: dict,
 def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloat: str,
                        imgTarget: str, outFolder: str, numComponents: int, maxItrs: int,
                        learningRate: float, stopLoss: float, updateRate: int,
-                       alpha: float, beta: float, gamma: float, delta: float, epsilon: float):
+                       alpha: float, beta: float, gamma: float, delta: float, epsilon: float, zeta: float):
     '''
     Extracts kinematic estimates based on a polyrigid registration model.
     :param inFolder: Path to the folder with the input information.
@@ -45,6 +46,7 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
     :param gamma: Hyperparameter. Controls strength of negative Jacobian determinant regulation.
     :param delta: Hyperparameter. Controls strength of rigidity regularation on rotations.
     :param epsilon: Hyperparameter.  Controls weight decay for rigid components in weight volume.
+    :param zeta: Hyperparameter. Controls segmentation thresholding for shape consistency in propagation.
     '''
 
     if not os.path.exists(outFolder):
@@ -165,9 +167,11 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
     for label, seg in aComponentSegmentations_Float.items():
         tTemp = F.grid_sample(torch.tensor(seg, dtype=torch.float32).cuda().unsqueeze(0).unsqueeze(0),
                               model.tDisplacementField,
-                              mode='nearest', padding_mode='zeros',
+                              mode='bilinear', padding_mode='zeros',
                               align_corners=False)
-        sitkTemp = sitk.GetImageFromArray(tTemp.detach().squeeze().cpu().numpy())
+        tTemp = np.where(tTemp.detach().squeeze().cpu().numpy() > zeta, 1.0,0.0)
+        tTemp = tTemp.astype(int)
+        sitkTemp = sitk.GetImageFromArray(tTemp)
         sitk.WriteImage(sitkTemp, vOutPath + '/warped_seg_' + str(label) + '.nii')
 
     sitkDVF = sitk.GetImageFromArray(model._getLEPT().detach().squeeze().cpu().numpy(),
@@ -178,7 +182,6 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
     tImgWarped = \
         sitk.GetImageFromArray(tImgWarped.detach().squeeze().cpu().numpy(), False)
     sitk.WriteImage(tImgWarped, vOutPath + "/imgWarped.nii")
-    # tImgWarped = sitk.GetArrayFromImage(tImgWarped)
 
     vDICE_Before = \
         f1_score(tComponentSegImg_Target.detach().cpu().numpy().reshape(-1, 1),
@@ -190,7 +193,12 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
     tComponentSegImg_Float = \
         sitk.GetImageFromArray(model.tImgSegmentation.detach().cpu().numpy(), False)
     sitk.WriteImage(tComponentSegImg_Float, vOutPath + "/float_seg_binary.nii")
-    tComponentSegImg_Float = sitk.GetArrayFromImage(tComponentSegImg_Float)
+
+
+    import matplotlib.pyplot as plt
+    plt.imsave("../images/results/" + inPrefixImg + "_binary_slice_27_zeta_" + str(zeta).replace('.', '_') + ".png",
+               tImgWarped_Seg.detach().squeeze().cpu().numpy()[27, :, :],cmap='gray')
+    plt.close()
 
     tImgWarped_Seg = \
         sitk.GetImageFromArray(tImgWarped_Seg.detach().squeeze().cpu().numpy(), False)
@@ -200,7 +208,6 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
     tComponentSegImg_Target = \
         sitk.GetImageFromArray(tComponentSegImg_Target.detach().cpu().numpy(), False)
     sitk.WriteImage(tComponentSegImg_Target, vOutPath + "/target_seg_binary.nii")
-    tComponentSegImg_Target = sitk.GetArrayFromImage(tComponentSegImg_Target) # todo remove if not needed
 
     # Due to the Grid Sample coordinate system scaling, we need to evaluate
     # The DVF on a synthetic point system.  This is scaled to the original
@@ -282,11 +289,24 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
     np.savez(vOutPath + '/model_results', **vModelResults)
     np.savez(vOutPath + '/model_loss',**vLossHistory)
 
+    imgTarget = sitk.GetImageFromArray(tImgTarget.detach().squeeze().cpu().numpy()
+                                       ,isVector=False)
+    sitk.WriteImage(imgTarget,vOutPath + '/imgReference.nii')
+    imgFloat = sitk.GetImageFromArray(tImgMoving.detach().squeeze().cpu().numpy()
+                                      ,isVector=False)
+    sitk.WriteImage(imgFloat,vOutPath + '/imgFloat.nii')
+
+
+
 
 if __name__ == "__main__":
+    torch.manual_seed(0)
+    random.seed(0)
+    np.random.seed(0)
+
     vStopLoss = 1e-5
     vLearningRate = 0.01
-    vMaxItrs = 200
+    vMaxItrs = 100
     vUpdateRate = 10
     vNumComponents = 15
     vInFolder = "../images/input/rave/"
@@ -297,40 +317,51 @@ if __name__ == "__main__":
     vEndFrame_low = -1
     vNumFrames = 20
     vOutFile = "../images/results/"
-    vDate = "20220412"
-    vAlpha = 1.0 # Signal strength for all regularization
-    vBeta = 0.75  # Signal strength for smoothness regularization
-    vGamma = 0.25  # Signal strength for negative JD regularization
-    vDelta = 0.015 # Signal strength for rigidity regularization
-    vEpsilon = 0.5 # Component weighting parameter
+    vStride = 1
+    vAlpha = [0.22] # Signal strength for all regularization
+    vBeta = [0.5]  # Signal strength for smoothness regularization
+    vGamma = [0.5]  # Signal strength for negative JD regularization
+    vDelta = [0.5] # Signal strength for rigidity regularization
+    vEpsilon = [0.5] # Component weighting parameter
+    vZeta = [0.0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.9]
 
     if vEndFrame_hi == -1:
         vEndFrame_hi = vNumFrames - 1
     if vEndFrame_low == -1:
         vEndFrame_low = 0
 
-    for source in range(vStartFrame, vEndFrame_hi):
-        if (source + 1 > vNumFrames - 1):
-            print("Cannot register outside of frame sequence.")
-            exit(1)
-        target = source + 1
-        vInFrame_Float = "frame_" + str(source)
-        vInFrame_Target = "frame_" + str(target)
+    for alpha in vAlpha:
+        for beta in vBeta:
+            for gamma in vGamma:
+                for delta in vDelta:
+                    for epsilon in vEpsilon:
+                        for zeta in vZeta:
+                            for source in range(vStartFrame, vEndFrame_hi, vStride):
+                                if (source + vStride > vNumFrames - 1):
+                                    print("Cannot register outside of frame sequence.")
+                                    break
+                                target = source + vStride
+                                vInFrame_Float = "frame_" + str(source)
+                                vInFrame_Target = "frame_" + str(target)
 
-        estimateKinematics(vInFolder,vInFrame_Float_Prefix,vInSeg_Float_Prefix,vInFrame_Float,
-                           vInFrame_Target,vOutFile,vNumComponents,vMaxItrs,vLearningRate,
-                           vStopLoss,vUpdateRate,vAlpha,vBeta,vGamma,vDelta,vEpsilon)
+                                estimateKinematics(vInFolder,vInFrame_Float_Prefix,vInSeg_Float_Prefix,vInFrame_Float,
+                                                   vInFrame_Target,vOutFile,vNumComponents,vMaxItrs,vLearningRate,
+                                                   vStopLoss,vUpdateRate,alpha,beta,gamma,delta,epsilon,zeta)
 
-    for source in range(vStartFrame, vEndFrame_low, -1):
-        if (source - 1 < 0):
-            print("Cannot register outside of frame sequence.")
-            exit(1)
-        target = source - 1
-        vInFrame_Float = "frame_" + str(source)
-        vInFrame_Target = "frame_" + str(target)
+                            for source in range(vStartFrame, vEndFrame_low, -vStride):
+                                if (source - vStride < 0):
+                                    print("Cannot register outside of frame sequence.")
+                                    break
+                                target = source - vStride
+                                vInFrame_Float = "frame_" + str(source)
+                                vInFrame_Target = "frame_" + str(target)
 
-        estimateKinematics(vInFolder,vInFrame_Float_Prefix,vInSeg_Float_Prefix,vInFrame_Float,
-                           vInFrame_Target,vOutFile,vNumComponents,vMaxItrs,vLearningRate,
-                           vStopLoss,vUpdateRate,vAlpha,vBeta,vGamma,vDelta,vEpsilon)
+                                estimateKinematics(vInFolder,vInFrame_Float_Prefix,vInSeg_Float_Prefix,vInFrame_Float,
+                                                   vInFrame_Target,vOutFile,vNumComponents,vMaxItrs,vLearningRate,
+                                                   vStopLoss,vUpdateRate,alpha,beta,gamma,delta,epsilon,zeta)
 
-    eval.getEvaluationPlots()
+
+                            label = f"_a_{str(alpha).replace('.','_')}_b_{str(beta).replace('.','_')}"\
+                                    F"_g_{str(gamma).replace('.','_')}_d_{str(delta).replace('.','_')}"\
+                                    f"_z_{str(zeta).replace('.','_')}"
+                            eval.getEvaluationPlots(label)

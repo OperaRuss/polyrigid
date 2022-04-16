@@ -196,7 +196,7 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
 
 
     import matplotlib.pyplot as plt
-    plt.imsave("../images/results/" + inPrefixImg + "_binary_slice_27_zeta_" + str(zeta).replace('.', '_') + ".png",
+    plt.imsave("../images/results/" + inPrefixImg + "_binary_"+imgTarget+"_zeta_" + str(zeta).replace('.', '_') + ".png",
                tImgWarped_Seg.detach().squeeze().cpu().numpy()[27, :, :],cmap='gray')
     plt.close()
 
@@ -319,11 +319,11 @@ if __name__ == "__main__":
     vOutFile = "../images/results/"
     vStride = 1
     vAlpha = [0.22] # Signal strength for all regularization
-    vBeta = [0.5]  # Signal strength for smoothness regularization
+    vBeta = [0.4]  # Signal strength for smoothness regularization
     vGamma = [0.5]  # Signal strength for negative JD regularization
-    vDelta = [0.5] # Signal strength for rigidity regularization
+    vDelta = [0.4] # Signal strength for rigidity regularization
     vEpsilon = [0.5] # Component weighting parameter
-    vZeta = [0.0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.9]
+    vZeta = [0.47] # Segmentation Threshold
 
     if vEndFrame_hi == -1:
         vEndFrame_hi = vNumFrames - 1

@@ -45,21 +45,25 @@ def getEvaluationPlots(params:str=None):
     x,y = zip(*sorted(finLoss.items()))
     axs[0,0].plot(x,y,'-ok')
     axs[0,0].set(title="Final Loss Score Achieved")
+    axs[0,0].set_ylim(0.007,0.015)
     axs[0,0].set_xticks(np.arange(0,21,2))
 
     x,y = zip(*sorted(netDICE.items()))
     axs[0,1].plot(x,y,'-ok')
     axs[0,1].set(title="Net DICE Gain")
+    axs[0,1].set_ylim(-0.05,0.03)
     axs[0,1].set_xticks(np.arange(0,21,2))
 
     x,y = zip(*sorted(percNegJDets.items()))
     axs[1,0].plot(x,y,'-ok')
     axs[1,0].set(title="% Neg JDets")
+    axs[1,0].set_ylim(0.00,0.14)
     axs[1,0].set_xticks(np.arange(0,21,2))
 
     x,y = zip(*sorted(meanRigid.items()))
     axs[1,1].plot(x,y,'-ok')
     axs[1,1].set(title="Mean Rigidity Score")
+    axs[1,1].set_ylim(0.0035,0.0085)
     axs[1,1].set_xticks(np.arange(0,21,2))
 
     fig.suptitle("Final Evaluation Scores After Registration on All Frames")

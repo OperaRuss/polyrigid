@@ -178,6 +178,10 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
                                      isVector=True)
     sitk.WriteImage(sitkDVF, vOutPath
                     + '/LEPT_frame_' + str(source) + '_to_' + str(target) + '.nii')
+    npPredSeg = tImgWarped_Seg.detach().cpu().numpy()
+    npTargSeg = tComponentSegImg_Target.detach().cpu().numpy()
+
+    cfsn = eval.confusionMatrix(npTargSeg,npPredSeg,vOutPath)
 
     tImgWarped = \
         sitk.GetImageFromArray(tImgWarped.detach().squeeze().cpu().numpy(), False)
@@ -194,12 +198,12 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
         sitk.GetImageFromArray(model.tImgSegmentation.detach().cpu().numpy(), False)
     sitk.WriteImage(tComponentSegImg_Float, vOutPath + "/float_seg_binary.nii")
 
-
+    '''
     import matplotlib.pyplot as plt
     plt.imsave("../images/results/" + inPrefixImg + "_binary_"+imgTarget+"_zeta_" + str(zeta).replace('.', '_') + ".png",
                tImgWarped_Seg.detach().squeeze().cpu().numpy()[27, :, :],cmap='gray')
     plt.close()
-
+    '''
     tImgWarped_Seg = \
         sitk.GetImageFromArray(tImgWarped_Seg.detach().squeeze().cpu().numpy(), False)
 
@@ -242,6 +246,7 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
                      'numNeg': vNumNeg,
                      'finalLoss': loss.item(),
                      'netDICE': vDICE_After - vDICE_Before}
+    cfsn['target'] = int(imgTarget.split('_')[-1])
     vItrRigidityScores = []
 
     with open(vOutPath + "/res_transforms.txt", "w") as out:
@@ -282,6 +287,7 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
             print(vCompTransform, file=out)
 
     vModelResults['meanRigidityScore'] = np.mean(vItrRigidityScores)
+    np.savez(vOutPath+'/confusionMatrix',**cfsn)
     np.savez(vOutPath + '/component_transforms_final_log',
              **vComponentFinalTransforms_Log)
     np.savez(vOutPath + '/component_transforms_final_euclidean',
@@ -296,9 +302,6 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
                                       ,isVector=False)
     sitk.WriteImage(imgFloat,vOutPath + '/imgFloat.nii')
 
-
-
-
 if __name__ == "__main__":
     torch.manual_seed(0)
     random.seed(0)
@@ -306,24 +309,24 @@ if __name__ == "__main__":
 
     vStopLoss = 1e-5
     vLearningRate = 0.01
-    vMaxItrs = 100
+    vMaxItrs = 10
     vUpdateRate = 10
     vNumComponents = 15
     vInFolder = "../images/input/rave/"
     vInFrame_Float_Prefix = "iso_"
     vInSeg_Float_Prefix = "em_"
     vStartFrame = 10
-    vEndFrame_hi = -1
-    vEndFrame_low = -1
+    vEndFrame_hi = 11
+    vEndFrame_low = 10
     vNumFrames = 20
     vOutFile = "../images/results/"
     vStride = 1
-    vAlpha = [0.22] # Signal strength for all regularization
-    vBeta = [0.4]  # Signal strength for smoothness regularization
-    vGamma = [0.5]  # Signal strength for negative JD regularization
-    vDelta = [0.4] # Signal strength for rigidity regularization
+    vAlpha = [1.0] # Signal strength for all regularization
+    vBeta = [0.533]  # Signal strength for smoothness regularization
+    vGamma = [0.333]  # Signal strength for negative JD regularization
+    vDelta = [0.433] # Signal strength for rigidity regularization
     vEpsilon = [0.5] # Component weighting parameter
-    vZeta = [0.47] # Segmentation Threshold
+    vZeta = [0.55] # Segmentation Threshold
 
     if vEndFrame_hi == -1:
         vEndFrame_hi = vNumFrames - 1

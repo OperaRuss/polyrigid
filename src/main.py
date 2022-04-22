@@ -320,7 +320,7 @@ if __name__ == "__main__":
     vRunID = '1'
     vOutFile = "../images/results/"
     vStride = 1
-    vAlpha = [0.1] # Signal strength for all regularization
+    vAlpha = [0.05] # Signal strength for all regularization
     vBeta = [0.0]  # Signal strength for smoothness regularization
     vGamma = [0.0]  # Signal strength for negative JD regularization
     vDelta = [1.0] # Signal strength for rigidity regularization

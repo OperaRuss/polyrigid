@@ -165,14 +165,22 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
                                    align_corners=False)
 
     for label, seg in aComponentSegmentations_Float.items():
-        tTemp = F.grid_sample(torch.tensor(seg, dtype=torch.float32).cuda().unsqueeze(0).unsqueeze(0),
-                              model.tDisplacementField,
-                              mode='bilinear', padding_mode='zeros',
-                              align_corners=False)
-        tTemp = np.where(tTemp.detach().squeeze().cpu().numpy() > zeta, 1.0,0.0)
-        tTemp = tTemp.astype(int)
-        sitkTemp = sitk.GetImageFromArray(tTemp)
-        sitk.WriteImage(sitkTemp, vOutPath + '/warped_seg_' + str(label) + '.nii')
+        if False:
+            tTemp = F.grid_sample(torch.tensor(seg, dtype=torch.float32).cuda().unsqueeze(0).unsqueeze(0),
+                                  model.tDisplacementField,
+                                  mode='bilinear', padding_mode='zeros',
+                                  align_corners=False)
+            tTemp = np.where(tTemp.detach().squeeze().cpu().numpy() > zeta, 1.0,0.0)
+            tTemp = tTemp.astype(int)
+            sitkTemp = sitk.GetImageFromArray(tTemp)
+            sitk.WriteImage(sitkTemp, vOutPath + '/warped_seg_' + str(label) + '.nii')
+        else:
+            tTemp = F.grid_sample(torch.tensor(seg, dtype=torch.float32).cuda().unsqueeze(0).unsqueeze(0),
+                                  model.tDisplacementField,
+                                  mode='nearest', padding_mode='zeros',
+                                  align_corners=False)
+            sitkTemp = sitk.GetImageFromArray(tTemp)
+            sitk.WriteImage(sitkTemp, vOutPath + '/warped_seg_' + str(label) + '.nii')
 
     sitkDVF = sitk.GetImageFromArray(model._getLEPT().detach().squeeze().cpu().numpy(),
                                      isVector=True)
@@ -309,16 +317,17 @@ if __name__ == "__main__":
 
     vStopLoss = 1e-5
     vLearningRate = 0.01
-    vMaxItrs = 10
+    vMaxItrs = 100
     vUpdateRate = 10
     vNumComponents = 15
     vInFolder = "../images/input/rave/"
     vInFrame_Float_Prefix = "iso_"
     vInSeg_Float_Prefix = "em_"
     vStartFrame = 10
-    vEndFrame_hi = 11
-    vEndFrame_low = 10
+    vEndFrame_hi = -1
+    vEndFrame_low = -1
     vNumFrames = 20
+    vRunID = '1'
     vOutFile = "../images/results/"
     vStride = 1
     vAlpha = [1.0] # Signal strength for all regularization

@@ -147,7 +147,7 @@ def sequenceConfusion(outPath):
     precision.savefig(outPath+'/summaryPrecision.png',bbox_inches='tight')
 
     recall, recallAx = plt.subplots(1)
-    x, y = zip(*sorted(aPrecision.items()))
+    x, y = zip(*sorted(aRecall.items()))
     recallAx.plot(x, y, '-ok')
     recallAx.set(title="Recall Across Sequence")
     recallAx.set_ylabel('Recall Score')
@@ -158,6 +158,7 @@ def sequenceConfusion(outPath):
     recall.savefig(outPath + '/summaryRecall.png', bbox_inches='tight')
 
     accuracy, accAx = plt.subplots(1)
+    x, y = zip(*sorted(aAccuracy.items()))
     accAx.plot(x, y, '-ok')
     accAx.set(title="Accuracy Across Sequence")
     accAx.set_ylabel('Accuracy Score')

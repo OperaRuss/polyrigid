@@ -3,6 +3,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import SimpleITK as sitk
+import vtk
 
 def getEvaluationPlots(params:str=None):
     fpResults = "../images/results"
@@ -104,7 +105,7 @@ def confusionMatrix(targetSeg, predictionSeg,outPath):
     IoU = np.count_nonzero(imgIoU)
 
     out = {'TP':TP,'FP':FP,'FN':FN,'TN':TN,'DICE':2*(TP/IoU),
-           'accuracy':TP/(TP+FP+FN+TN),'precision':TP/(TP+FP),'recall':TP/(TP+FN)}
+           'accuracy':TP/(TP+FP+FN+TN)*100,'precision':TP/(TP+FP)*100,'recall':TP/(TP+FN)*100}
     return out
 
 def sequenceConfusion(outPath):
@@ -139,7 +140,7 @@ def sequenceConfusion(outPath):
     x, y = zip(*sorted(aPrecision.items()))
     precAx.plot(x, y, '-ok')
     precAx.set(title="Precision Across Sequence")
-    precAx.set_ylabel('Precision Score')
+    precAx.set_ylabel('Precision (%)')
     precAx.set_xlabel('Target Frame')
     precAx.axhline(np.mean(y), linestyle='--', color='r')
     precAx.axvline(10,linestyle='--',color='b',alpha=0.5)
@@ -150,7 +151,7 @@ def sequenceConfusion(outPath):
     x, y = zip(*sorted(aRecall.items()))
     recallAx.plot(x, y, '-ok')
     recallAx.set(title="Recall Across Sequence")
-    recallAx.set_ylabel('Recall Score')
+    recallAx.set_ylabel('Recall (%)')
     recallAx.set_xlabel('Target Frame')
     recallAx.axhline(np.mean(y), linestyle='--', color='r')
     recallAx.axvline(10, linestyle='--', color='b', alpha=0.5)
@@ -161,9 +162,61 @@ def sequenceConfusion(outPath):
     x, y = zip(*sorted(aAccuracy.items()))
     accAx.plot(x, y, '-ok')
     accAx.set(title="Accuracy Across Sequence")
-    accAx.set_ylabel('Accuracy Score')
+    accAx.set_ylabel('Accuracy (%)')
     accAx.set_xlabel('Target Frame')
     accAx.axhline(np.mean(y), linestyle='--', color='r')
     accAx.axvline(10, linestyle='--', color='b', alpha=0.5)
     accAx.set_xticks(np.arange(0, 21, 2))
     accuracy.savefig(outPath + '/summaryAccuracy.png', bbox_inches='tight')
+
+def _getStaticMeshes(fpInPath, filePrefix:str='warped_seg_', fpOutPath:str='../images/results/meshes'):
+    '''
+    This script was modeled after an example provided by Dr. James Fishbaugh. It
+    takes in an input file path, reads all .nii files, converts them to static meshes
+    with the marching cubes algorithm, and outputs them to the out path.
+    :param fpInPath: Filepath to a folder containing .nii binary labels
+    :param filePrefix: Prefix for all label images of interest
+    :param fpOutPath: Filepath to output directory
+    :return:
+    '''
+    if not os.path.exists(fpOutPath):
+        os.mkdir(fpOutPath)
+
+    for file in sorted(glob.glob(fpInPath+"/"+filePrefix+"*.nii")):
+        basename, niiExt = os.path.splitext(os.path.basename(file))
+        print("Processing "+basename+niiExt+'.')
+        reader = vtk.vtkNIFTIImageReader()
+        reader.SetFileName(file)
+        reader.Update()
+        img = reader.GetOutput()
+
+        mc = vtk.vtkMarchingCubes()
+        mc.SetInputData(img)
+        mc.ComputeNormalsOff()
+        mc.ComputeGradientsOff()
+        mc.SetComputeScalars(False)
+        mc.SetValue(0,1)
+        mc.Update()
+
+        confilter = vtk.vtkPolyDataConnectivityFilter()
+        confilter.SetInputData(mc.GetOutput())
+        confilter.SetExtractionModeToLargestRegion()
+        confilter.Update()
+
+        poly = confilter.GetOutput()
+
+        outFile = basename + ".vtk"
+        writer = vtk.vtkPolyDataWriter()
+        writer.SetInputData(poly)
+        writer.SetFileName(os.path.join(fpOutPath,outFile))
+        writer.Update()
+
+def getStaticMeshes(fpResults:str='../images/results',filePrefix:str='warped_seg_'):
+    fpOut = os.path.join('../','meshes')
+    if not os.path.exists(fpOut):
+        os.mkdir(fpOut)
+
+    for file in sorted(glob.glob(fpResults + "/*")):
+        if os.path.isdir(file):
+            subdir = os.path.basename(file)
+            _getStaticMeshes(file,filePrefix,os.path.join(fpOut,subdir))

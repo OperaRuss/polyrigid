@@ -1,0 +1,8 @@
+SimpleITK~=2.1.1.2
+numpy~=1.22.3
+torch~=1.11.0
+sklearn~=0.0
+scikit-learn~=1.0.2
+matplotlib~=3.5.1
+scipy~=1.8.0
+nibabel~=3.2.2

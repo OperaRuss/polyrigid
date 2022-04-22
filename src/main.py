@@ -179,7 +179,7 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
                                   model.tDisplacementField,
                                   mode='nearest', padding_mode='zeros',
                                   align_corners=False)
-            sitkTemp = sitk.GetImageFromArray(tTemp)
+            sitkTemp = sitk.GetImageFromArray(tTemp.detach().squeeze().cpu().numpy())
             sitk.WriteImage(sitkTemp, vOutPath + '/warped_seg_' + str(label) + '.nii')
 
     sitkDVF = sitk.GetImageFromArray(model._getLEPT().detach().squeeze().cpu().numpy(),

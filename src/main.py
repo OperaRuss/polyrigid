@@ -48,6 +48,12 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
     :param epsilon: Hyperparameter.  Controls weight decay for rigid components in weight volume.
     :param zeta: Hyperparameter. Controls segmentation thresholding for shape consistency in propagation.
     '''
+    print("====================================================")
+    print("Estimating registration of ",imgFloat,"to",imgTarget)
+    print("\tModel running with:")
+    print("\tAlpha:",alpha,"Beta:",beta,"Gamma:",gamma)
+    print("\tDelta:",delta,"Zeta:",zeta,"Epsilon:",epsilon)
+    print("====================================================")
 
     if not os.path.exists(outFolder):
         os.makedirs(outFolder)
@@ -132,7 +138,8 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
         smooth_loss = beta * utils._loss_Smooth(model.tDisplacementField)
         jdet_loss = gamma * utils._loss_JDet(model.tDisplacementField)
         rigid_loss = delta * model._getLoss_Rigidity()
-        loss = reg_loss + alpha * (rigid_loss + smooth_loss + jdet_loss)
+        trans_loss = zeta * model._getLoss_Translation_L2()
+        loss = reg_loss + alpha * (rigid_loss + smooth_loss + jdet_loss + trans_loss)
 
         # Calculate gradients wrt parameters
         loss.backward()
@@ -145,8 +152,9 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
 
         if itr % updateRate == 0:
             print(
-                "Itr: {}, Total {} Reg {} Smooth {} Jdet {} Rigid {}".format(
-                    itr, loss.item(), reg_loss.item(), smooth_loss.item(), jdet_loss.item(), rigid_loss.item()
+                "Itr: {}, Total {} Reg {} Smooth {} Jdet {} Rigid {} Trans {}".format(
+                    itr, loss.item(), reg_loss.item(), smooth_loss.item(),
+                    jdet_loss.item(), rigid_loss.item(), trans_loss.item()
                 )
             )
 
@@ -196,12 +204,6 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
         sitk.GetImageFromArray(model.tImgSegmentation.detach().cpu().numpy(), False)
     sitk.WriteImage(tComponentSegImg_Float, vOutPath + "/float_seg_binary.nii")
 
-    '''
-    import matplotlib.pyplot as plt
-    plt.imsave("../images/results/" + inPrefixImg + "_binary_"+imgTarget+"_zeta_" + str(zeta).replace('.', '_') + ".png",
-               tImgWarped_Seg.detach().squeeze().cpu().numpy()[27, :, :],cmap='gray')
-    plt.close()
-    '''
     tImgWarped_Seg = \
         sitk.GetImageFromArray(tImgWarped_Seg.detach().squeeze().cpu().numpy(), False)
 
@@ -320,12 +322,12 @@ if __name__ == "__main__":
     vRunID = '1'
     vOutFile = "../images/results/"
     vStride = 1
-    vAlpha = [0.05] # Signal strength for all regularization
+    vAlpha = [0.5] # Signal strength for all regularization
     vBeta = [0.0]  # Signal strength for smoothness regularization
     vGamma = [0.0]  # Signal strength for negative JD regularization
-    vDelta = [1.0] # Signal strength for rigidity regularization
-    vEpsilon = [0.5] # Component weighting parameter
-    vZeta = [0.55] # Segmentation Threshold
+    vDelta = [0.66] # Signal strength for rigidity regularization
+    vEpsilon = [0.9] # Component weighting parameter
+    vZeta = [0.1] # Translation Regularization
 
     if vEndFrame_hi == -1:
         vEndFrame_hi = vNumFrames - 1
@@ -339,10 +341,11 @@ if __name__ == "__main__":
                     for epsilon in vEpsilon:
                         for zeta in vZeta:
                             for source in range(vStartFrame, vEndFrame_hi, vStride):
-                                div = beta+gamma+delta
+                                div = beta+gamma+delta+zeta
                                 beta = beta/div
                                 gamma = gamma/div
                                 delta = delta/div
+                                zeta = zeta/div
 
                                 if (source + vStride > vNumFrames - 1):
                                     print("Cannot register outside of frame sequence.")

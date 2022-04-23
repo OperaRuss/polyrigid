@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from scipy import ndimage
-from sklearn.metrics import f1_score
 
 def rotX(radians: float,isTorch: bool=False):
     temp = np.array([[1,0,0,0],
@@ -163,6 +162,24 @@ class Polyrigid(nn.Module):
             Rdet = torch.det(transforms[i]) - 1.0
             sum += torch.frobenius_norm(RRT) + torch.frobenius_norm(RTR) + Rdet
         return sum
+
+    def _getLoss_Translation_L1(self):
+        transforms = self._getLogComponentTransforms()
+        transforms = torch.matrix_exp(torch.reshape(transforms,
+                                                    (self.mNumComponents,
+                                                     self.mNDims + 1,
+                                                     self.mNDims + 1)))
+        transforms = transforms[:, 0:3, 3]
+        return torch.mean(torch.sum(torch.abs(transforms),dim=1))
+
+    def _getLoss_Translation_L2(self):
+        transforms = self._getLogComponentTransforms()
+        transforms = torch.matrix_exp(torch.reshape(transforms,
+                                                    (self.mNumComponents,
+                                                     self.mNDims + 1,
+                                                     self.mNDims + 1)))
+        transforms = transforms[:, 0:3, 3]
+        return torch.mean(torch.sum(torch.multiply(transforms,transforms),dim=1))
 
     def forward(self):
         self.tDisplacementField = self._getLEPT()

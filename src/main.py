@@ -30,7 +30,7 @@ def get_model(imgFloating: torch.tensor, componentSegmentations: dict,
 def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloat: str,
                        imgTarget: str, outFolder: str, numComponents: int, maxItrs: int,
                        learningRate: float, stopLoss: float, updateRate: int,
-                       alpha: float, beta: float, gamma: float, delta: float, epsilon: float, zeta: float):
+                       alpha: float, beta: float, gamma: float, delta: float, epsilon: float, zeta: float, eta:float):
     '''
     Extracts kinematic estimates based on a polyrigid registration model.
     :param inFolder: Path to the folder with the input information.
@@ -52,7 +52,7 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
     print("Estimating registration of ",imgFloat,"to",imgTarget)
     print("\tModel running with:")
     print("\tAlpha:",alpha,"Beta:",beta,"Gamma:",gamma)
-    print("\tDelta:",delta,"Zeta:",zeta,"Epsilon:",epsilon)
+    print("\tDelta:",delta,"Epsilon:",epsilon,"Zeta:",zeta,"Eta:",eta)
     print("====================================================")
 
     if not os.path.exists(outFolder):
@@ -114,7 +114,7 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
         aComponentSegmentations_Float[idx] = utils.normalizeImage(img)
 
     for idx, img in aComponentSegmentations_Float.items():
-        aComponentWeightValues[idx] = epsilon
+        aComponentWeightValues[idx] = zeta
 
     model, optimizer = get_model(tImgMoving, aComponentSegmentations_Float,
                                  aComponentWeightValues, learningRate=learningRate)
@@ -134,12 +134,12 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
         tImgWarped = model.forward()
         tImgFixed = 1.0 * tImgTarget
 
-        DICE_loss = model._getLoss_DICE(tComponentSegImg_Target)
+        DICE_loss = eta * model._getLoss_DICE(tComponentSegImg_Target)
         similarity_loss = alpha * utils._getMetricMSE(tImgWarped, tImgFixed)
         smooth_loss = beta * utils._loss_Smooth(model.tDisplacementField)
         jdet_loss = gamma * utils._loss_JDet(model.tDisplacementField)
         rigid_loss = delta * model._getLoss_Rigidity()
-        trans_loss = zeta * model._getLoss_Translation_L2()
+        trans_loss = epsilon * model._getLoss_Translation_L2()
         loss = DICE_loss + similarity_loss + rigid_loss + smooth_loss + jdet_loss + trans_loss
 
         # Calculate gradients wrt parameters
@@ -260,10 +260,12 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
     with open(vOutPath + "/res_transforms.txt", "w") as out:
         print(f"MaxIterations: {maxItrs}", file=out)
         print(f"Learning Rate: {learningRate}", file=out)
+        print(f"DICE Parameters: {eta}",file=out)
         print(f"Similarity Parameter: {alpha}",file=out)
         print(f"Smoothness Parameter: {beta}", file=out)
-        print(f"Jacobian Regularization Parameter: {gamma}", file=out)
-        print(f"Rigidity Regularization Parameter: {delta}",file=out)
+        print(f"Jacobian Parameter: {gamma}", file=out)
+        print(f"Rigidity Parameter: {delta}",file=out)
+        print(f"Translation Parameter: {epsilon}",file=out)
         print(f"DICE score before registration: {vDICE_Before:.4f}", file=out)
         print(f"DICE score after registration: {vDICE_After:.4f}", file=out)
         print(f"Loss achieved: {loss:.4f}", file=out)
@@ -334,12 +336,13 @@ if __name__ == "__main__":
     vRunID = '1'
     vOutFile = "../images/results/"
     vStride = 1
-    vAlpha = [1.0] # Signal strength for all regularization
-    vBeta = [0.0]  # Signal strength for smoothness regularization
-    vGamma = [0.0]  # Signal strength for negative JD regularization
-    vDelta = [0.] # Signal strength for rigidity regularization
-    vEpsilon = [0.] # Translation Regularization
-    vZeta = [0.] # Component weighting parameter
+    vAlpha = [1.0] # Signal strength for MSE loss
+    vEta = [1.0]  # Signal strength for DICE loss
+    vBeta = [0.0,1.0]  # Signal strength for smoothness regularization
+    vGamma = [0.0,1.0]  # Signal strength for negative JD regularization
+    vDelta = [0.0,1.0] # Signal strength for rigidity regularization
+    vEpsilon = [0.0,1.0] # Translation Regularization
+    vZeta = [0.5] # Component weighting parameter
 
 
     if vEndFrame_hi == -1:
@@ -347,45 +350,79 @@ if __name__ == "__main__":
     if vEndFrame_low == -1:
         vEndFrame_low = 0
 
-    for alpha in vAlpha:
-        for beta in vBeta:
-            for gamma in vGamma:
-                for delta in vDelta:
+    for a in vAlpha:
+        for b in vBeta:
+            for g in vGamma:
+                for d in vDelta:
                     for zeta in vZeta:
-                        for epsilon in vEpsilon:
-                            for source in range(vStartFrame, vEndFrame_hi, vStride):
-                                #div = abs(beta)+abs(gamma)+abs(delta)+abs(epsilon)
-                                #beta = abs(beta)/div
-                                #gamma = abs(gamma)/div
-                                #delta = abs(delta)/div
-                                #epsilon = abs(epsilon)/div
+                        for e in vEpsilon:
+                            for h in vEta:
+                                alpha = abs(a)
+                                beta = abs(b)
+                                gamma = abs(g)
+                                delta = abs(d)
+                                epsilon = abs(e)
+                                eta = abs(h)
+                                div = alpha + beta + gamma + delta + epsilon + eta
 
-                                if (source + vStride > vNumFrames - 1):
-                                    print("Cannot register outside of frame sequence.")
-                                    break
-                                target = source + vStride
-                                vInFrame_Float = "frame_" + str(source)
-                                vInFrame_Target = "frame_" + str(target)
+                                if div <= 0.0:
+                                    print("Weighting of hyper parameters requires a positive value!")
+                                    exit(1)
 
-                                estimateKinematics(vInFolder, vInFrame_Float_Prefix, vInSeg_Float_Prefix, vInFrame_Float,
-                                                   vInFrame_Target, vOutFile, vNumComponents, vMaxItrs, vLearningRate,
-                                                   vStopLoss, vUpdateRate, alpha, beta, gamma, delta, zeta, epsilon)
+                                alpha = abs(alpha)/div
+                                beta = abs(beta)/div
+                                gamma = abs(gamma)/div
+                                delta = abs(delta)/div
+                                epsilon = abs(epsilon)/div
+                                eta = abs(eta)/div
 
-                            for source in range(vStartFrame, vEndFrame_low, -vStride):
-                                if (source - vStride < 0):
-                                    print("Cannot register outside of frame sequence.")
-                                    break
-                                target = source - vStride
-                                vInFrame_Float = "frame_" + str(source)
-                                vInFrame_Target = "frame_" + str(target)
+                                def _formatLabelVal(val: float):
+                                    out = round(val,4)
+                                    first, last = str(out).split('.')
+                                    if len(last) < 4:
+                                        last = last + '000'
+                                    return f"{int(first):02}_{last[0:4]}"
 
-                                estimateKinematics(vInFolder, vInFrame_Float_Prefix, vInSeg_Float_Prefix, vInFrame_Float,
-                                                   vInFrame_Target, vOutFile, vNumComponents, vMaxItrs, vLearningRate,
-                                                   vStopLoss, vUpdateRate, alpha, beta, gamma, delta, zeta, epsilon)
+                                label = f"DICE_{_formatLabelVal(eta)}_MSE_{_formatLabelVal(alpha)}" \
+                                        f"_smooth_{_formatLabelVal(beta)}_nJD_{_formatLabelVal(gamma)}"\
+                                        f"_rigid_{_formatLabelVal(delta)}_trans_{_formatLabelVal(epsilon)}"\
+                                        f"_weight_{_formatLabelVal(zeta)}"
 
+                                fpOut = os.path.join(vOutFile,label)
+                                if not os.path.exists(fpOut):
+                                    os.mkdir(fpOut)
 
-                            label = f"_a_{str(alpha).replace('.','_')}_b_{str(beta).replace('.','_')}"\
-                                    F"_g_{str(gamma).replace('.','_')}_d_{str(delta).replace('.','_')}"\
-                                    f"_e_{str(epsilon).replace('.', '_')}"
-                            eval.getEvaluationPlots(label)
-                            eval.getStaticMeshes(params=label)
+                                for source in range(vStartFrame, vEndFrame_hi, vStride):
+                                    if (source + vStride > vNumFrames - 1):
+                                        print("Cannot register outside of frame sequence.")
+                                        break
+                                    target = source + vStride
+                                    vInFrame_Float = "frame_" + str(source)
+                                    vInFrame_Target = "frame_" + str(target)
+
+                                    estimateKinematics(vInFolder, vInFrame_Float_Prefix, vInSeg_Float_Prefix,
+                                                       vInFrame_Float,vInFrame_Target, fpOut, vNumComponents,
+                                                       vMaxItrs, vLearningRate,vStopLoss, vUpdateRate,
+                                                       alpha=alpha, beta=beta, gamma=gamma, delta=delta,
+                                                       epsilon=epsilon,zeta=zeta,eta=eta)
+
+                                for source in range(vStartFrame, vEndFrame_low, -vStride):
+                                    if (source - vStride < 0):
+                                        print("Cannot register outside of frame sequence.")
+                                        break
+                                    target = source - vStride
+                                    vInFrame_Float = "frame_" + str(source)
+                                    vInFrame_Target = "frame_" + str(target)
+
+                                    estimateKinematics(vInFolder, vInFrame_Float_Prefix, vInSeg_Float_Prefix,
+                                                       vInFrame_Float,vInFrame_Target, fpOut, vNumComponents,
+                                                       vMaxItrs, vLearningRate,vStopLoss, vUpdateRate,
+                                                       alpha=alpha, beta=beta, gamma=gamma, delta=delta,
+                                                       epsilon=epsilon, zeta=zeta, eta=eta)
+                                print("Generating evaluation metrics...")
+                                eval.getEvaluationPlots(label)
+                                print("Generating static meshes...")
+                                eval.getStaticMeshes(params=label)
+                                print("Model complete.")
+
+    print("All model runs complete.")

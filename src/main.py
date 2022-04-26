@@ -134,12 +134,13 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
         tImgWarped = model.forward()
         tImgFixed = 1.0 * tImgTarget
 
-        reg_loss = utils._getMetricMSE(tImgWarped, tImgFixed)
+        DICE_loss = model._getLoss_DICE(tComponentSegImg_Target)
+        similarity_loss = alpha * utils._getMetricMSE(tImgWarped, tImgFixed)
         smooth_loss = beta * utils._loss_Smooth(model.tDisplacementField)
         jdet_loss = gamma * utils._loss_JDet(model.tDisplacementField)
         rigid_loss = delta * model._getLoss_Rigidity()
         trans_loss = zeta * model._getLoss_Translation_L2()
-        loss = reg_loss + alpha * (rigid_loss + smooth_loss + jdet_loss + trans_loss)
+        loss = DICE_loss + similarity_loss + rigid_loss + smooth_loss + jdet_loss + trans_loss
 
         # Calculate gradients wrt parameters
         loss.backward()
@@ -152,8 +153,8 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
 
         if itr % updateRate == 0:
             print(
-                "Itr: {}, Total {} Reg {} Smooth {} Jdet {} Rigid {} Trans {}".format(
-                    itr, loss.item(), reg_loss.item(), smooth_loss.item(),
+                "Itr: {}, Total {} DICE {} Sim {} Smooth {} Jdet {} Rigid {} Trans {}".format(
+                    itr, loss.item(), DICE_loss.item(),similarity_loss.item(), smooth_loss.item(),
                     jdet_loss.item(), rigid_loss.item(), trans_loss.item()
                 )
             )
@@ -177,7 +178,14 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
                               model.tDisplacementField,
                               mode='nearest', padding_mode='zeros',
                               align_corners=False)
-        sitkTemp = sitk.GetImageFromArray(tTemp.detach().squeeze().cpu().numpy())
+        npTemp = tTemp.detach().squeeze().cpu().numpy()
+
+        aComponentCfsn = eval.confusionMatrix(aComponentSegmentations_Target[label],
+                                              npTemp,vOutPath,int(imgTarget.split('_')[-1]),
+                                              "Component_"+str(label)+"_")
+        np.savez(vOutPath+'/component_'+str(label)+'_cfsn',**aComponentCfsn)
+
+        sitkTemp = sitk.GetImageFromArray(npTemp)
         sitk.WriteImage(sitkTemp, vOutPath + '/warped_seg_' + str(label) + '.nii')
 
     sitkDVF = sitk.GetImageFromArray(model._getLEPT().detach().squeeze().cpu().numpy(),
@@ -187,7 +195,7 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
     npPredSeg = tImgWarped_Seg.detach().cpu().numpy()
     npTargSeg = tComponentSegImg_Target.detach().cpu().numpy()
 
-    cfsn = eval.confusionMatrix(npTargSeg,npPredSeg,vOutPath)
+    cfsn = eval.confusionMatrix(npTargSeg,npPredSeg,vOutPath,imgTarget)
 
     tImgWarped = \
         sitk.GetImageFromArray(tImgWarped.detach().squeeze().cpu().numpy(), False)
@@ -252,17 +260,21 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
     with open(vOutPath + "/res_transforms.txt", "w") as out:
         print(f"MaxIterations: {maxItrs}", file=out)
         print(f"Learning Rate: {learningRate}", file=out)
-        print(f"Smoothness Parameter: {alpha * beta}", file=out)
-        print(f"Jacobian Regularization Parameter: {alpha * gamma}", file=out)
-        print(f"Rigidity Regularization Parameter: {alpha * delta}",file=out)
+        print(f"Similarity Parameter: {alpha}",file=out)
+        print(f"Smoothness Parameter: {beta}", file=out)
+        print(f"Jacobian Regularization Parameter: {gamma}", file=out)
+        print(f"Rigidity Regularization Parameter: {delta}",file=out)
         print(f"DICE score before registration: {vDICE_Before:.4f}", file=out)
         print(f"DICE score after registration: {vDICE_After:.4f}", file=out)
-        print(f"Target Loss: {stopLoss:.4f}", file=out)
         print(f"Loss achieved: {loss:.4f}", file=out)
         percJDET = (vNumNeg / (np.prod(model.mImageDimensions)) * 100)
         vModelResults['percentageNegJDets'] = percJDET
         print(f"Percentage of Jacobian determinants negative: " +
               f"{percJDET:.2f}%", file=out)
+        print("Confusion Matrix for all carpals:")
+        print("\tP\t\tN")
+        print(f"P\t{cfsn['TP']}\t{cfsn['FN']}")
+        print(f"N\t{cfsn['FP']}\t{cfsn['TN']}\t")
         print("Final parameter Estimations:\n", file=out)
         for i in range(0, 8):
             aCompTransforms = model._getLogComponentTransforms()
@@ -309,7 +321,7 @@ if __name__ == "__main__":
 
     vStopLoss = 1e-5
     vLearningRate = 0.01
-    vMaxItrs = 200
+    vMaxItrs = 100
     vUpdateRate = 10
     vNumComponents = 15
     vInFolder = "../images/input/rave/"
@@ -322,12 +334,13 @@ if __name__ == "__main__":
     vRunID = '1'
     vOutFile = "../images/results/"
     vStride = 1
-    vAlpha = [0.5] # Signal strength for all regularization
+    vAlpha = [1.0] # Signal strength for all regularization
     vBeta = [0.0]  # Signal strength for smoothness regularization
     vGamma = [0.0]  # Signal strength for negative JD regularization
-    vDelta = [0.66] # Signal strength for rigidity regularization
-    vEpsilon = [0.9] # Component weighting parameter
-    vZeta = [0.1] # Translation Regularization
+    vDelta = [0.] # Signal strength for rigidity regularization
+    vEpsilon = [0.] # Translation Regularization
+    vZeta = [0.] # Component weighting parameter
+
 
     if vEndFrame_hi == -1:
         vEndFrame_hi = vNumFrames - 1
@@ -338,14 +351,14 @@ if __name__ == "__main__":
         for beta in vBeta:
             for gamma in vGamma:
                 for delta in vDelta:
-                    for epsilon in vEpsilon:
-                        for zeta in vZeta:
+                    for zeta in vZeta:
+                        for epsilon in vEpsilon:
                             for source in range(vStartFrame, vEndFrame_hi, vStride):
-                                div = beta+gamma+delta+zeta
-                                beta = beta/div
-                                gamma = gamma/div
-                                delta = delta/div
-                                zeta = zeta/div
+                                #div = abs(beta)+abs(gamma)+abs(delta)+abs(epsilon)
+                                #beta = abs(beta)/div
+                                #gamma = abs(gamma)/div
+                                #delta = abs(delta)/div
+                                #epsilon = abs(epsilon)/div
 
                                 if (source + vStride > vNumFrames - 1):
                                     print("Cannot register outside of frame sequence.")
@@ -354,9 +367,9 @@ if __name__ == "__main__":
                                 vInFrame_Float = "frame_" + str(source)
                                 vInFrame_Target = "frame_" + str(target)
 
-                                estimateKinematics(vInFolder,vInFrame_Float_Prefix,vInSeg_Float_Prefix,vInFrame_Float,
-                                                   vInFrame_Target,vOutFile,vNumComponents,vMaxItrs,vLearningRate,
-                                                   vStopLoss,vUpdateRate,alpha,beta,gamma,delta,epsilon,zeta)
+                                estimateKinematics(vInFolder, vInFrame_Float_Prefix, vInSeg_Float_Prefix, vInFrame_Float,
+                                                   vInFrame_Target, vOutFile, vNumComponents, vMaxItrs, vLearningRate,
+                                                   vStopLoss, vUpdateRate, alpha, beta, gamma, delta, zeta, epsilon)
 
                             for source in range(vStartFrame, vEndFrame_low, -vStride):
                                 if (source - vStride < 0):
@@ -366,13 +379,13 @@ if __name__ == "__main__":
                                 vInFrame_Float = "frame_" + str(source)
                                 vInFrame_Target = "frame_" + str(target)
 
-                                estimateKinematics(vInFolder,vInFrame_Float_Prefix,vInSeg_Float_Prefix,vInFrame_Float,
-                                                   vInFrame_Target,vOutFile,vNumComponents,vMaxItrs,vLearningRate,
-                                                   vStopLoss,vUpdateRate,alpha,beta,gamma,delta,epsilon,zeta)
+                                estimateKinematics(vInFolder, vInFrame_Float_Prefix, vInSeg_Float_Prefix, vInFrame_Float,
+                                                   vInFrame_Target, vOutFile, vNumComponents, vMaxItrs, vLearningRate,
+                                                   vStopLoss, vUpdateRate, alpha, beta, gamma, delta, zeta, epsilon)
 
 
                             label = f"_a_{str(alpha).replace('.','_')}_b_{str(beta).replace('.','_')}"\
                                     F"_g_{str(gamma).replace('.','_')}_d_{str(delta).replace('.','_')}"\
-                                    f"_z_{str(zeta).replace('.','_')}"
+                                    f"_e_{str(epsilon).replace('.', '_')}"
                             eval.getEvaluationPlots(label)
-                            eval.getStaticMeshes()
+                            eval.getStaticMeshes(params=label)

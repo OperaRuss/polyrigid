@@ -181,6 +181,17 @@ class Polyrigid(nn.Module):
         transforms = transforms[:, 0:3, 3]
         return torch.mean(torch.sum(torch.multiply(transforms,transforms),dim=1))
 
+    def _getLoss_DICE(self,tTargetSegmentation):
+        tWarpedFloatSegmentation = F.grid_sample(self.tImgSegmentation,
+                                   self.tDisplacementField,
+                                   mode='bilinear', padding_mode='zeros',
+                                   align_corners=False)
+        sum_axes = list(range(2,self.mNDims + 2))
+        numerator = 2 * (tWarpedFloatSegmentation * tTargetSegmentation).sum(dim=sum_axes)
+        denominator = torch.clamp((tWarpedFloatSegmentation + tTargetSegmentation).sum(dim=sum_axes),min=1e-5)
+        dice = torch.mean(numerator/denominator)
+        return -dice
+
     def forward(self):
         self.tDisplacementField = self._getLEPT()
         return F.grid_sample(self.tImgFloat,self.tDisplacementField,

@@ -412,49 +412,49 @@ def displayFrames(params:str=""):
             labTP = sitk.ReadImage(os.path.join(file, 'imgTP.nii'))
             labTP = sitk.GetArrayFromImage(labTP)
 
-            def saveImageBW(imSlice, saveName):
+            def saveImageBW(imSlice, fpOut, saveName):
                 plt.imshow(imSlice,cmap='gray',interpolation='bilinear')
                 fig = plt.gcf()
                 ax = plt.gca()
                 fig.set_size_inches(6,6)
                 ax.set_axis_off()
-                fig.savefig(os.path.join(fpOut, params + '_' + saveName + '_f' + fSource + fTarget + '.png'),
+                fig.savefig(os.path.join(fpOut, saveName + f'_{fTarget:02}.png'),
                             bbox_inches='tight',dpi=500)
                 fig.clear()
                 plt.close()
 
-            saveImageBW(imgWarp[slice,:,:],'imgWarped')
-            saveImageBW(imgRef[slice,:,:], 'imgRef')
-            saveImageBW(imgFloat[slice,:,:],'imgFloat')
+            saveImageBW(imgWarp[slice,:,:],fpSubDir_Warp,'imgWarped')
+            saveImageBW(imgRef[slice,:,:],fpSubDir_Ref,'imgRef')
+            saveImageBW(imgFloat[slice,:,:],fpSubDir_Float,'imgFloat')
 
-            def saveImageColor(imSlice, saveName):
+            def saveImageColor(imSlice, fpOut, saveName):
                 plt.imshow(imSlice, interpolation='bilinear')
                 fig = plt.gcf()
                 ax = plt.gca()
                 ax.set_axis_off()
                 fig.set_size_inches(6, 6)
-                fig.savefig(os.path.join(fpOut, params + '_' + saveName + '_f' + fSource + fTarget + '.png'),
+                fig.savefig(os.path.join(fpOut, saveName + f'_{fTarget:02}.png'),
                             bbox_inches='tight',dpi=500)
                 fig.clear()
                 plt.close()
 
             imgRefWithWarpedSegs = np.copy(imgRef)
             imgRefWithWarpedSegs[:,:,:,0] = np.where(labWarped >= 0.7,labWarped,imgRef[:,:,:,0])
-            saveImageColor(imgRefWithWarpedSegs[slice,:,:],'imgRefOverlaidWarped')
+            saveImageColor(imgRefWithWarpedSegs[slice,:,:],fpSubDir_WarpOverRef,'imgWarpedOverRef')
 
             imgRefWithRefSegs = np.copy(imgRef)
             imgRefWithRefSegs[:, :, :, 0] = np.where(labRef >= 0.7, labRef, imgRef[:,:,:,0])
-            saveImageColor(imgRefWithRefSegs[slice,:,:],'imgRefOverlaidRef')
+            saveImageColor(imgRefWithRefSegs[slice,:,:],fpSubDir_RefOverRef,'imgRefOverRef')
 
             imgRefWithFloatSegs = np.copy(imgRef)
             imgRefWithFloatSegs[:, :, :, 0] = np.where(labFloat >= 0.7, labFloat, imgRef[:,:,:,0])
-            saveImageColor(imgRefWithFloatSegs[slice,:,:],'imgRefOverlaidFloat')
+            saveImageColor(imgRefWithFloatSegs[slice,:,:],fpSubDir_FloatOverRef,'imgFloatOverRef')
 
             imgRefWithErrorSegs = np.copy(imgRef)
             imgRefWithErrorSegs[:,:,:,0] = np.where(labFN >= 0.7, labFN, imgRef[:,:,:,0])
             imgRefWithErrorSegs[:,:,:,2] = np.where(labFP >= 0.7, labFP, imgRef[:,:,:,2])
             imgRefWithErrorSegs[:,:,:,1] = np.where(labTP >= 0.7, labTP*0.5, imgRef[:,:,:,1])
-            saveImageColor(imgRefWithErrorSegs[slice,:,:],'imgRefOverlaidErrors')
+            saveImageColor(imgRefWithErrorSegs[slice,:,:],fpSubDir_Errors,'imgErrors')
 
 
 

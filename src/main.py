@@ -338,10 +338,10 @@ if __name__ == "__main__":
     vStride = 1
     vAlpha = [1.0] # Signal strength for MSE loss
     vEta = [1.0]  # Signal strength for DICE loss
-    vBeta = [1.0]  # Signal strength for smoothness regularization
+    vBeta = [0.0]  # Signal strength for smoothness regularization
     vGamma = [0.0]  # Signal strength for negative JD regularization
-    vDelta = [.5] # Signal strength for rigidity regularization
-    vEpsilon = [0.5] # Translation Regularization
+    vDelta = [0.] # Signal strength for rigidity regularization
+    vEpsilon = [0.] # Translation Regularization
     vZeta = [0.5] # Component weighting parameter
 
 

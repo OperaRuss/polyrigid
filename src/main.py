@@ -15,6 +15,7 @@ import utilities as utils
 from sklearn.metrics import f1_score
 import Polyrigid as pr
 import Evaluation as eval
+import Kinematics as K
 
 def get_model(imgFloating: torch.tensor, componentSegmentations: dict,
               componentWeights: dict, learningRate: float = 0.005):
@@ -338,10 +339,10 @@ if __name__ == "__main__":
     vStride = 1
     vAlpha = [1.0] # Signal strength for MSE loss
     vEta = [1.0]  # Signal strength for DICE loss
-    vBeta = [0.0]  # Signal strength for smoothness regularization
+    vBeta = [0.0,1.0]  # Signal strength for smoothness regularization
     vGamma = [0.0]  # Signal strength for negative JD regularization
-    vDelta = [0.] # Signal strength for rigidity regularization
-    vEpsilon = [0.] # Translation Regularization
+    vDelta = [1.0] # Signal strength for rigidity regularization
+    vEpsilon = [1.0] # Translation Regularization
     vZeta = [0.5] # Component weighting parameter
 
 
@@ -423,6 +424,8 @@ if __name__ == "__main__":
                                 eval.getEvaluationPlots(label)
                                 print("Generating static meshes...")
                                 eval.getStaticMeshes(params=label)
+                                print("Estimating Kinematics...")
+                                K.getPlots(label=label)
                                 print("Model complete.")
 
     print("All model runs complete.")

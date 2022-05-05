@@ -279,9 +279,13 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
         print(f"P\t{cfsn['TP']}\t{cfsn['FN']}")
         print(f"N\t{cfsn['FP']}\t{cfsn['TN']}\t")
         print("Final parameter Estimations:\n", file=out)
+        aCompTransforms = model._getLogComponentTransforms()
         for i in range(0, 8):
-            aCompTransforms = model._getLogComponentTransforms()
             print("Component " + str(i + 1), file=out)
+            vLogTrans = torch.reshape(aCompTransforms[i],
+                                      (model.mNDims+1,
+                                       model.mNDims+1))
+            vComponentFinalTransforms_Log[str(i+1)] = vLogTrans.detach().cpu().numpy()
             transform = torch.matrix_exp(torch.reshape(aCompTransforms[i],
                                                        (model.mNDims + 1, model.mNDims + 1)))
             transform = transform[0:3, 0:3]
@@ -291,14 +295,9 @@ def estimateKinematics(inFolder: str, inPrefixImg: str, inPrefixSeg:str, imgFloa
             rigidity = torch.frobenius_norm(RRT) + torch.frobenius_norm(RTR) + Rdet
             vItrRigidityScores.append(rigidity.item())
             print("Rigidity Score: ", rigidity.item(), file=out)
-            vCompTransform_Log = torch.reshape(aCompTransforms[i],
-                                               (model.mNDims + 1,
-                                                model.mNDims + 1))
-            vComponentFinalTransforms_Log[str(i)] = \
-                vCompTransform_Log.detach().cpu().numpy()
-            vCompTransform = torch.matrix_exp(vCompTransform_Log)
+            vCompTransform = torch.matrix_exp(vLogTrans)
             vCompTransform = vCompTransform.detach().cpu().numpy()
-            vComponentFinalTransforms_Euclidean[str(i)] = vCompTransform
+            vComponentFinalTransforms_Euclidean[str(i+1)] = vCompTransform
             print(vCompTransform, file=out)
 
     vModelResults['meanRigidityScore'] = np.mean(vItrRigidityScores)

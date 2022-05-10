@@ -84,10 +84,10 @@ def _getWarpedComponentPlots(label: str):
         ax.set_ylim(0, 100)
         ax.set_zlim(0, 60)
         ax.set_zticks([])
-        ax.legend(handles=patches, bbox_to_anchor=(0.2, .07, 0.64, .07), loc='lower left',
+        ax.legend(handles=patches, bbox_to_anchor=(0.2, .075, 0.64, .075), loc='lower left',
                       ncol=4, mode="expand", borderaxespad=0.)
-        fig.suptitle("Estimated Carpal Bone Positions", fontsize=24)
-        ax.set_title("Frame "+vSource+" to Frame "+vTarget, fontsize=14)
+        fig.suptitle("Coordinate Frames Fit to Pose Estimations", y=0.85,fontsize=24)
+        ax.set_title("Frame "+vSource+" to Frame "+vTarget, fontsize=14,y=0.9)
         fig.tight_layout()
 
         for comp in vDesiredComponents:
@@ -149,12 +149,18 @@ def _getModelAccuracy_Centroids(label):
     patches = _getPatches_Components(True)
 
     figErr, axErr = plt.subplots(figsize=(10,10))
-    figErr.suptitle("Translation Error Between Prediction and Ground Truth")
+    figErr.suptitle("Translation Error Between Prediction and Ground Truth",y=0.85)
     axErr.set_xlabel("Target Frame")
-    axErr.set_ylabel("Euclidean Distance between Centroids")
+    axErr.set_ylabel("Voxels by Euclidean Distance")
     axErr.yaxis.grid(True)
     figErr.tight_layout()
     aAllErrors = {}
+
+    Pd = torch.arange(0, 60, dtype=torch.float32)
+    Ph = torch.arange(0, 100, dtype=torch.float32)
+    Pw = torch.arange(0, 100, dtype=torch.float32)
+    P = torch.cartesian_prod(Pd, Ph, Pw)
+    P = P.reshape(60, 100, 100, 3).detach().numpy()
 
     for file in glob.glob(os.path.join(fpIn_Preds,"frame_*_to_frame_*")):
         aFrameErrors = np.zeros(8)
@@ -171,8 +177,8 @@ def _getModelAccuracy_Centroids(label):
         ax.set_zticks([])
         ax.legend(handles=patches, bbox_to_anchor=(0.2, .07, 0.64, .07), loc='lower left',
                       ncol=4, mode="expand", borderaxespad=0.)
-        fig.suptitle("Centroids for Ground Truth vs Predictions", fontsize=24)
-        ax.set_title("Frame "+vSource+" to Frame "+vTarget, fontsize=14)
+        fig.suptitle("Centroids for Ground Truth vs Predictions", y=0.85,fontsize=24)
+        ax.set_title("Frame "+vSource+" to Frame "+vTarget, fontsize=14,y=0.9)
         fig.tight_layout()
 
         for comp in vDesiredComponents:
@@ -187,6 +193,14 @@ def _getModelAccuracy_Centroids(label):
                                                    + '_seg_' + str(comp) + '.nii.gz'))
             npImgTruth = sitk.GetArrayFromImage(imgTruth)[10:70, 60:160, 50:150] # crop taken from main
                                                                                  # Should probably be a utility func.
+
+            ptCloud = np.where(np.stack((npImgPred,) * 3, axis=-1) >= 0.7, P, 0)
+            ptCloud = np.ma.masked_equal(ptCloud, 0)
+            ax.scatter(ptCloud[:, :, :, 1].flatten(),
+                       ptCloud[:, :, :, 2].flatten(),
+                       ptCloud[:, :, :, 0].flatten(),
+                       color=colors[compColor],
+                       alpha=0.01)
 
             predCentroid = skimage.measure.centroid(npImgPred)
             truthCentroid = skimage.measure.centroid(npImgTruth)
@@ -232,7 +246,7 @@ def _getModelAccuracy_Rotations(label):
     vDesiredComponents = range(1, 9)
 
     figErr, axErr = plt.subplots(figsize=(10, 10))
-    figErr.suptitle("Rotation Error Between Predictions and Ground Truth")
+    figErr.suptitle("Rotation Error Between Predictions and Ground Truth",y=0.85)
     axErr.set_xlabel("Target Frame")
     axErr.set_ylabel("1 - cos(Theta) of Angle Between Primary Axes")
     axErr.yaxis.grid(True)
@@ -240,12 +254,7 @@ def _getModelAccuracy_Rotations(label):
 
     aAllErrors = {}
 
-    # Create a list of coordinates
-    Pd = torch.arange(0, 60, dtype=torch.float32)
-    Ph = torch.arange(0, 100, dtype=torch.float32)
-    Pw = torch.arange(0, 100, dtype=torch.float32)
-    P = torch.cartesian_prod(Pd, Ph, Pw)
-    P = P.reshape(60, 100, 100, 3).detach().numpy()
+    patches = _getPatches_Axes()
 
     for file in glob.glob(os.path.join(fpIn_Preds,"frame_*_to_frame_*")):
         vSource = os.path.basename(file).split('_')[1]
@@ -256,12 +265,16 @@ def _getModelAccuracy_Rotations(label):
         fig = plt.figure(figsize=(10, 10))
         ax = fig.add_subplot(projection='3d', proj_type='ortho')
         ax.view_init(elev=vElevation, azim=vAzim)
-        ax.set_ylim(45, 85)
-        ax.set_xlim(10, 75)
-        ax.set_zlim(0, 60)
+        ax.set_xticks([])
+        ax.set_yticks([])
         ax.set_zticks([])
-        fig.suptitle("Rotation Frames for Ground Truth vs Predictions", fontsize=24)
-        ax.set_title("Frame " + vSource + " to Frame " + vTarget, fontsize=14)
+        ax.set_xlim(-5, 45)
+        ax.set_ylim(-5, 55)
+        ax.set_zlim(0, 10)
+        ax.legend(handles=patches, bbox_to_anchor=(0.2, .15, 0.64, .15), loc='lower left',
+                  ncol=4, mode="expand", borderaxespad=0.)
+        fig.suptitle("Rotation Accuracy for Warp Field", y=0.85,fontsize=24)
+        ax.set_title("Frame " + vSource + " to Frame " + vTarget, fontsize=14,y=0.9)
         fig.tight_layout()
 
         for comp in vDesiredComponents:
@@ -275,22 +288,6 @@ def _getModelAccuracy_Rotations(label):
             npImgTruth = sitk.GetArrayFromImage(imgTruth)[10:70, 60:160, 50:150] # crop taken from main
                                                                                  # Should probably be a utility func.
 
-            ptCloud = np.where(np.stack((npImgPred,) * 3, axis=-1) >= 0.7, P, 0)
-            ptCloud = np.ma.masked_equal(ptCloud, 0)
-            ax.scatter(ptCloud[:, :, :, 1].flatten(),
-                       ptCloud[:, :, :, 2].flatten(),
-                       ptCloud[:, :, :, 0].flatten(),
-                       color='gray',
-                       alpha=0.01)
-            '''
-            ptCloud = np.where(np.stack((npImgTruth,) * 3, axis=-1) >= 0.7, P, 0)
-            ptCloud = np.ma.masked_equal(ptCloud, 0)
-            ax.scatter(ptCloud[:, :, :, 1].flatten(),
-                       ptCloud[:, :, :, 2].flatten(),
-                       ptCloud[:, :, :, 0].flatten(),
-                       color='gray',
-                       alpha=0.01)
-            '''
             predFrame = skimage.measure.inertia_tensor(npImgPred)
             predEigenvalues, predEigenvectors = np.linalg.eig(predFrame)
             predEigenvalues, predEigenvectors = _getSortedEigens(predEigenvalues,predEigenvectors)
@@ -305,12 +302,29 @@ def _getModelAccuracy_Rotations(label):
             predCentroid = skimage.measure.centroid(npImgPred)
             truthCentroid = skimage.measure.centroid(npImgTruth)
 
-            ax.quiver(predCentroid[1], predCentroid[2], predCentroid[0], *predEigenvectors[0], color='r', length=predEigenvalues[0] * 0.2)
-            ax.quiver(predCentroid[1], predCentroid[2], predCentroid[0], *predEigenvectors[1], color='g', length=predEigenvalues[1] * 0.2)
-            ax.quiver(predCentroid[1], predCentroid[2], predCentroid[0], *predEigenvectors[2], color='b', length=predEigenvalues[2] * 0.2)
-            ax.quiver(truthCentroid[1], truthCentroid[2], truthCentroid[0], *truthEigenvectors[0], color='k', length=truthEigenvalues[0] * 0.2)
-            ax.quiver(truthCentroid[1], truthCentroid[2], truthCentroid[0], *truthEigenvectors[1], color='k', length=truthEigenvalues[1] * 0.2)
-            ax.quiver(truthCentroid[1], truthCentroid[2], truthCentroid[0], *truthEigenvectors[2], color='k', length=truthEigenvalues[2] * 0.2)
+            coord = compCoords[comp]
+            ax.quiver(*coord, *predEigenvectors[0], color='r', length=predEigenvalues[0] * 0.2)
+            ax.quiver(*coord, *predEigenvectors[1], color='g', length=predEigenvalues[1] * 0.2)
+            ax.quiver(*coord, *predEigenvectors[2], color='b', length=predEigenvalues[2] * 0.2)
+            ax.quiver(*coord, *truthEigenvectors[0], color='k', length=truthEigenvalues[0] * 0.2)
+            ax.quiver(*coord, *truthEigenvectors[1], color='k', length=truthEigenvalues[1] * 0.2)
+            ax.quiver(*coord, *truthEigenvectors[2], color='k', length=truthEigenvalues[2] * 0.2)
+        ax.text(0, 3, 10, "Hamate", fontfamily='sans-serif', fontstyle='italic',
+                bbox={'facecolor': 'gray', 'alpha': 0.5, 'pad': 5})
+        ax.text(0, 17, 10, "Capitate", fontfamily='sans-serif', fontstyle='italic',
+                bbox={'facecolor': 'gray', 'alpha': 0.5, 'pad': 5})
+        ax.text(0, 33, 10, "Trapezoid", fontfamily='sans-serif', fontstyle='italic',
+                bbox={'facecolor': 'gray', 'alpha': 0.5, 'pad': 5})
+        ax.text(0, 46, 10, "Trapezium", fontfamily='sans-serif', fontstyle='italic',
+                bbox={'facecolor': 'gray', 'alpha': 0.5, 'pad': 5})
+        ax.text(43, 3, 10, "Pisiform", fontfamily='sans-serif', fontstyle='italic',
+                bbox={'facecolor': 'gray', 'alpha': 0.5, 'pad': 5})
+        ax.text(43, 17, 10, "Triquetral", fontfamily='sans-serif', fontstyle='italic',
+                bbox={'facecolor': 'gray', 'alpha': 0.5, 'pad': 5})
+        ax.text(43, 33, 10, "Lunate", fontfamily='sans-serif', fontstyle='italic',
+                bbox={'facecolor': 'gray', 'alpha': 0.5, 'pad': 5})
+        ax.text(43, 46, 10, "Scaphoid", fontfamily='sans-serif', fontstyle='italic',
+                bbox={'facecolor': 'gray', 'alpha': 0.5, 'pad': 5})
         aAllErrors[vTarget] = aFrameErrors
         fig.savefig(os.path.join(fpOut, os.path.basename(file)), bbox_inches='tight')
         fig.clear()
@@ -420,7 +434,7 @@ def _getComponentTransformAccuracy_Translation(label):
     composedTransforms = _getComposedComponentTransforms(label)
 
     figErr, axErr = plt.subplots(figsize=(10, 10))
-    figErr.suptitle("Translation Error Between Estimated Transforms and Ground Truth")
+    figErr.suptitle("Translation Error Between Estimated Transforms and Ground Truth",y=0.85)
     axErr.set_xlabel("Target Frame")
     axErr.set_ylabel("Voxels by Euclidean Distance")
     axErr.yaxis.grid(True)
@@ -458,8 +472,8 @@ def _getComponentTransformAccuracy_Translation(label):
         ax.set_zticks([])
         ax.legend(handles=patches, bbox_to_anchor=(0.2, 0.07, 0.64, 0.07), loc='lower left',
                   ncol=4, mode="expand", borderaxespad=0.)
-        fig.suptitle("Centroids for Ground Truth vs Estimated Transforms", fontsize=24)
-        ax.set_title("Frame " + vSource + " to Frame " + vTarget, fontsize=14)
+        fig.suptitle("Centroids for Ground Truth vs Estimated Transforms", y=0.85, fontsize=24)
+        ax.set_title("Frame " + vSource + " to Frame " + vTarget, fontsize=14,y=0.9)
         fig.tight_layout()
 
         for comp in vDesiredComponents:
@@ -526,7 +540,7 @@ def _getComponentTransformAccuracy_Rotation(label):
     composedTransforms = _getComposedComponentTransforms(label)
 
     figErr, axErr = plt.subplots(figsize=(10, 10))
-    figErr.suptitle("Rotation Error Between Predictions and Ground Truth")
+    figErr.suptitle("Rotation Error Between Predictions and Ground Truth",y=0.85)
     axErr.set_xlabel("Target Frame")
     axErr.set_ylabel("1 - cos(Theta) of Angle Between Primary Axes")
     axErr.yaxis.grid(True)
@@ -535,16 +549,7 @@ def _getComponentTransformAccuracy_Rotation(label):
     patches = _getPatches_Axes()
 
     aAllErrors = {}
-    '''
-    # Create a list of coordinates
-    Pd = torch.arange(0, 60, dtype=torch.float32)
-    Ph = torch.arange(0, 100, dtype=torch.float32)
-    Pw = torch.arange(0, 100, dtype=torch.float32)
-    P = torch.cartesian_prod(Pd, Ph, Pw)
-    P1 = torch.ones(60 * 100 * 100)
-    P = torch.cat((P, P1.unsqueeze(-1)), dim=1)
-    P = P.reshape(60, 100, 100, 4).detach().numpy()
-    '''
+
     for targetFrame in range(0, 20):
         if targetFrame < 10:
             vSource = str(targetFrame + 1)
@@ -566,10 +571,10 @@ def _getComponentTransformAccuracy_Rotation(label):
         ax.set_xlim(-5, 45)
         ax.set_ylim(-5,55)
         ax.set_zlim(0, 10)
-        ax.legend(handles=patches, bbox_to_anchor=(0.2, .07, 0.64, .07), loc='lower left',
+        ax.legend(handles=patches, bbox_to_anchor=(0.2, 0.15, 0.64, 0.15), loc='lower left',
                   ncol=4, mode="expand", borderaxespad=0.)
-        fig.suptitle("Rotation Frames for Ground Truth vs Estimated Transforms", fontsize=24)
-        ax.set_title("Frame " + vSource + " to Frame " + vTarget, fontsize=14)
+        fig.suptitle("Rotation Accuracy of Estimated Transforms", y=0.85, fontsize=24)
+        ax.set_title("Frame " + vSource + " to Frame " + vTarget, fontsize=14,y=0.9)
         fig.tight_layout()
 
         for comp in vDesiredComponents:
@@ -579,27 +584,7 @@ def _getComponentTransformAccuracy_Rotation(label):
             imgTruth = sitk.ReadImage(os.path.join(fpGroundTruths, vTruthPrefix + str(vTarget)
                                                    + '_seg_' + str(comp) + '.nii.gz'))
             npImgTruth = sitk.GetArrayFromImage(imgTruth)[10:70, 60:160, 50:150]  # crop taken from main
-            '''
-            # Should probably be a utility func.
-            trans = composedTransforms[str(targetFrame)][str(comp)].T
-            ptCloud = np.einsum('ij,...i', trans, P)
-            ptCloud = (ptCloud / (ptCloud[:, :, :, 3, None] + 1e-7))[:, :, :, :3]
-            ptCloud = np.where(np.stack((baseSegDescriptors['segmentations'][str(comp)],) * 3, axis=-1) >= 0.7, ptCloud,
-                               0)
-            ptCloud = np.ma.masked_equal(ptCloud, 0)
-            ax.scatter(ptCloud[:, :, :, 1].flatten(),
-                       ptCloud[:, :, :, 2].flatten(),
-                       ptCloud[:, :, :, 0].flatten(),
-                       color=colorGray,
-                       alpha=0.01)
-            
-            
-            predCentroid = baseSegDescriptors['centroids'][comp - 1]
-            predCentroid_homo = np.concatenate((predCentroid, [1.]))
-            predCentroid_trans = np.dot(composedTransforms[str(targetFrame)][str(comp)], predCentroid_homo)
-            predCentroid = np.divide(predCentroid_trans, predCentroid_trans[-1])[:-1]
-            truthCentroid = skimage.measure.centroid(npImgTruth)
-            '''
+
             predFrame = baseSegDescriptors['axes'][comp-1]
             predFrame0_homo = np.concatenate((predFrame[0],[1.]))
             predFrame1_homo = np.concatenate((predFrame[1],[1.]))
@@ -674,4 +659,4 @@ def getPlots(label):
     _getComponentTransformAccuracy_Translation(label)
     _getComponentTransformAccuracy_Rotation(label)
 
-getPlots("DICE_00_2000_MSE_00_2000_smooth_00_2000_nJD_00_0000_rigid_00_2000_trans_00_2000_weight_00_5000")
+#getPlots("DICE_00_2000_MSE_00_2000_smooth_00_2000_nJD_00_0000_rigid_00_2000_trans_00_2000_weight_00_5000")

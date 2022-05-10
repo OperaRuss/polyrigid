@@ -189,6 +189,7 @@ def sequenceConfusion(outPath,params:str=""):
     diceAx.set(title="DICE Scores Across Sequence")
     diceAx.set_ylabel('DICE Score')
     diceAx.set_xlabel('Target Frame')
+    diceAx.set_ylim(0.9,2.0)
     diceAx.axvline(10,linestyle='--',color='b',alpha=0.5)
     diceAx.set_xticks(np.arange(0, 21, 2))
     dice.savefig(outPath+'/summaryDICE.png',bbox_inches='tight')

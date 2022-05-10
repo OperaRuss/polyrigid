@@ -192,6 +192,41 @@ class Polyrigid(nn.Module):
         dice = torch.mean(numerator/denominator)
         return -dice
 
+    def _jacobian_determinant_3d(self):
+        '''
+        Implementation from
+        https://github.com/cwmok/LapIRN/blob/bc45fe07ae289985e4de99e850b0257524e3132d/Code/miccai2020_model_stage.py#L781
+        :param tDisplacementField:
+        :return:
+        '''
+        dy = self.tDisplacementField[:, 1:, :-1, :-1, :] - self.tDisplacementField[:, :-1, :-1, :-1, :]
+        dx = self.tDisplacementField[:, :-1, 1:, :-1, :] - self.tDisplacementField[:, :-1, :-1, :-1, :]
+        dz = self.tDisplacementField[:, :-1, :-1, 1:, :] - self.tDisplacementField[:, :-1, :-1, :-1, :]
+
+        Jdet0 = dx[:, :, :, :, 0] * (dy[:, :, :, :, 1] * dz[:, :, :, :, 2] - dy[:, :, :, :, 2] * dz[:, :, :, :, 1])
+        Jdet1 = dx[:, :, :, :, 1] * (dy[:, :, :, :, 0] * dz[:, :, :, :, 2] - dy[:, :, :, :, 2] * dz[:, :, :, :, 0])
+        Jdet2 = dx[:, :, :, :, 2] * (dy[:, :, :, :, 0] * dz[:, :, :, :, 0] - dy[:, :, :, :, 1] * dz[:, :, :, :, 0])
+
+        Jdet = Jdet0 - Jdet1 + Jdet2
+
+        return Jdet
+
+    def _loss_JDet(self):
+        neg_Jdet = -1.0 * self._jacobian_determinant_3d()
+        selected_neg_Jdet = F.relu(neg_Jdet)
+        return torch.mean(selected_neg_Jdet)
+
+    def _loss_Smooth(self):
+        dy = torch.abs(self.tDisplacementField[:, 1:, :, :, :] - self.tDisplacementField[:, :-1, :, :, :])
+        dx = torch.abs(self.tDisplacementField[:, :, 1:, :, :] - self.tDisplacementField[:, :, :-1, :, :])
+        dz = torch.abs(self.tDisplacementField[:, :, :, 1:, :] - self.tDisplacementField[:, :, :, :-1, :])
+        return (torch.mean(dx * dx) + torch.mean(dy * dy) + torch.mean(dz * dz)) / 3.0
+
+    def _getMetricMSE(self, moving, target):
+        se = torch.subtract(target, moving)
+        se = torch.pow(se, 2.0)
+        return torch.mean(se)
+
     def forward(self):
         self.tDisplacementField = self._getLEPT()
         return F.grid_sample(self.tImgFloat,self.tDisplacementField,

@@ -2,10 +2,15 @@ import nibabel as nib
 import numpy as np
 import torch
 import torch.nn.functional as F
-from scipy import ndimage
 import matplotlib.pyplot as plt
 
 def getFramesFromNifty14D(inputFilePath, outputFilePath):
+    '''
+    Utility function to slice a 4D NIfTI-1 file into k 3D frames, and adjusts header files appropriately.
+    :param inputFilePath: File path to a 4D NIfTI-1 file.
+    :param outputFilePath: File path to output folder for all sequence frames.
+    :return:
+    '''
     img = nib.load(inputFilePath)
     affine = img.affine
     hdr = img.header
@@ -24,6 +29,7 @@ def getFramesFromNifty14D(inputFilePath, outputFilePath):
 
 def normalizeImage(img: np.ndarray):
     '''
+    Min-max image normaliztion.
     :param img: A numpy array of un-normalized values of any range.
     :return: The same image, normalized to the range [0.0,1.0]
     '''
@@ -37,6 +43,13 @@ def normalizeImage(img: np.ndarray):
         return temp
 
 def _getMetricNCC(moving,target, windowWidth: int=9):
+    '''
+    [DRAFT FUNCTION] Gives the Normalized Cross Correlation loss metric.  Implementation emulates Voxel Morph.
+    :param moving: Torch tensor of the moving image.
+    :param target: Torch tensor of the target image.
+    :param windowWidth: Int value scalar for the window width. Default is 9 voxels. Should be odd.
+    :return:
+    '''
     ndims = len(moving.shape) - 2
     assert ndims in [1, 2, 3], "volumes should be 1 to 3 dimensions. found: %d" % ndims
     window = [windowWidth] * ndims
@@ -75,12 +88,13 @@ def _getMetricNCC(moving,target, windowWidth: int=9):
     cc = cross_coef * cross_coef / (var_M * var_T + 1e-5)
     return torch.mean(cc)
 
-def _getMetricMSE(moving, target):
-    se = torch.subtract(target,moving)
-    se = torch.pow(se,2.0)
-    return torch.mean(se)
-
 def _augmentDimensions(imageDimensions: tuple, augmentation):
+    '''
+    Helper function to concatenate a tensor shape with an augmented dimension. Not used in code at this time.
+    :param imageDimensions: Tensor shape tuple.
+    :param augmentation: augmentation desired for the tensor.  Ie: (1,2,3) [4,4] => (1,2,3,4,4)
+    :return:
+    '''
     temp = list(imageDimensions)
     if type(augmentation) == int:
         temp.append(augmentation)
@@ -91,104 +105,12 @@ def _augmentDimensions(imageDimensions: tuple, augmentation):
         temp = temp + aug
     return tuple(temp)
 
-def _getDistanceToCompoonentRegion(componentSegmentation: np.ndarray):
-    '''
-    :param componentSegmentation: Binary image with foreground values as objects and all else as background.
-    :return: Returns the exact Euclidean distance from a background pixel to the nearest foreground pixel.
-    '''
-    maxIntensity = np.max(componentSegmentation)
-    invertedImage = np.subtract(maxIntensity, componentSegmentation)
-    return ndimage.distance_transform_edt(invertedImage)
-
-def _getRegionWeight(componentSegmentation: np.ndarray, gamma: float):
-    '''
-    :param componentSegmentation: Binary label image of a single component from the image.
-    :param gamma: The relative weight assigned to this component.
-    :return: Returns an imgae containing a diffusion of influence over the image space relative to the object.
-    '''
-    return (1.0 / (1.0 + (gamma * pow(_getDistanceToCompoonentRegion(componentSegmentation), 2))))
-
-
-def _getWeightCommowick(componentSegmentations: dict, ratesOfDecay: dict):
-    '''
-    :param componentSegmentations: Dictionary of binary images for component regions
-    :param ratesOfDecay: Dictionary of {label:weight} pairs where label = component segmentation label
-    :return: Dictionary of normalized weight images summing to 1.0 at each voxel
-    '''
-    vCommowickWeights = {}
-    for label, segmentation in componentSegmentations.items():
-        vCommowickWeights[label] = _getRegionWeight(segmentation, ratesOfDecay[label])
-    vSumImage = np.zeros(componentSegmentations[0].shape,dtype=np.float32)
-    for image in vCommowickWeights.values():
-        vSumImage += image
-    vNormalizedWeights = {}
-    for label, image in vCommowickWeights.items():
-        vNormalizedWeights[label] = np.divide(image, vSumImage)
-    return vNormalizedWeights
-
-def rotX(radians: float,isTorch: bool=False):
-    temp = np.array([[1,0,0,0],
-                         [0,np.cos(radians),np.sin(radians),0],
-                         [0,-np.sin(radians),np.cos(radians),0],
-                         [0,0,0,1]],dtype=np.float32)
-    if (isTorch):
-        return torch.tensor(temp,dtype=torch.float32).cuda()
-    else:
-        return temp
-
-def rotY(radians:float, isTorch: bool=False):
-    temp = np.array([[np.cos(radians),0,-np.sin(radians),0],
-                         [0,1,0,0],
-                         [-np.sin(radians),0,np.cos(radians),0],
-                         [0,0,0,1]],dtype=np.float32)
-    if (isTorch):
-        return torch.tensor(temp,dtype=torch.float32).cuda()
-    else:
-        return temp
-
-def rotZ(radians: float, isTorch: bool=False):
-    temp = np.array([[np.cos(radians),-np.sin(radians),0,0],
-                         [np.sin(radians),np.cos(radians),0,0],
-                         [0,0,1,0],
-                         [0,0,0,1]],dtype=np.float32)
-    if (isTorch):
-        return torch.tensor(temp,dtype=torch.float32).cuda()
-    else:
-        return temp
-
-def jacobian_determinant_3d(tDisplacementField):
-    '''
-    Implementation from
-    https://github.com/cwmok/LapIRN/blob/bc45fe07ae289985e4de99e850b0257524e3132d/Code/miccai2020_model_stage.py#L781
-    :param tDisplacementField:
-    :return:
-    '''
-    dy = tDisplacementField[:,1:,:-1,:-1,:] - tDisplacementField[:,:-1,:-1,:-1,:]
-    dx = tDisplacementField[:,:-1,1:,:-1,:] - tDisplacementField[:,:-1,:-1,:-1,:]
-    dz = tDisplacementField[:,:-1,:-1,1:,:] - tDisplacementField[:,:-1,:-1,:-1,:]
-
-    Jdet0 = dx[:,:,:,:,0] * (dy[:,:,:,:,1]*dz[:,:,:,:,2] - dy[:,:,:,:,2]*dz[:,:,:,:,1])
-    Jdet1 = dx[:,:,:,:,1] * (dy[:,:,:,:,0]*dz[:,:,:,:,2] - dy[:,:,:,:,2]*dz[:,:,:,:,0])
-    Jdet2 = dx[:,:,:,:,2] * (dy[:,:,:,:,0]*dz[:,:,:,:,0] - dy[:,:,:,:,1]*dz[:,:,:,:,0])
-
-    Jdet = Jdet0 - Jdet1 + Jdet2
-
-    return Jdet
-
-def _loss_JDet(tDisplacementField):
-    neg_Jdet = -1.0 * jacobian_determinant_3d(tDisplacementField)
-    selected_neg_Jdet = F.relu(neg_Jdet)
-    return torch.mean(selected_neg_Jdet)
-
-def _loss_Smooth(tDisplacementField):
-    dy = torch.abs(tDisplacementField[:,1:,:,:,:] - tDisplacementField[:,:-1,:,:,:])
-    dx = torch.abs(tDisplacementField[:,:,1:,:,:] - tDisplacementField[:,:,:-1,:,:])
-    dz = torch.abs(tDisplacementField[:,:,:,1:,:] - tDisplacementField[:,:,:,:-1,:])
-    return (torch.mean(dx*dx)+torch.mean(dy*dy)+torch.mean(dz*dz))/3.0
-
 def pltImage(tImg: torch.tensor, title: str="", cmap:str='gray',
              toShow: bool=True, toSave: bool=False,
              outPath:str="../images/results/", outFile: str="img.png"):
+    '''
+    Basic plotting helper.
+    '''
     plt.imshow(tImg,cmap=cmap)
     plt.title(title)
     plt.axis('off')
@@ -197,3 +119,22 @@ def pltImage(tImg: torch.tensor, title: str="", cmap:str='gray',
     if(toShow):
         plt.show()
     plt.close()
+
+def jacobian_determinant_3d(displacementField):
+    '''
+    Implementation from
+    https://github.com/cwmok/LapIRN/blob/bc45fe07ae289985e4de99e850b0257524e3132d/Code/miccai2020_model_stage.py#L781
+    :param tDisplacementField: A displacement vector field passed as a PyTorch tensor.
+    :return: Torch tensor with scalar jacobian determinants (non-log)
+    '''
+    dy = displacementField[:, 1:, :-1, :-1, :] - displacementField[:, :-1, :-1, :-1, :]
+    dx = displacementField[:, :-1, 1:, :-1, :] - displacementField[:, :-1, :-1, :-1, :]
+    dz = displacementField[:, :-1, :-1, 1:, :] - displacementField[:, :-1, :-1, :-1, :]
+
+    Jdet0 = dx[:, :, :, :, 0] * (dy[:, :, :, :, 1] * dz[:, :, :, :, 2] - dy[:, :, :, :, 2] * dz[:, :, :, :, 1])
+    Jdet1 = dx[:, :, :, :, 1] * (dy[:, :, :, :, 0] * dz[:, :, :, :, 2] - dy[:, :, :, :, 2] * dz[:, :, :, :, 0])
+    Jdet2 = dx[:, :, :, :, 2] * (dy[:, :, :, :, 0] * dz[:, :, :, :, 0] - dy[:, :, :, :, 1] * dz[:, :, :, :, 0])
+
+    Jdet = Jdet0 - Jdet1 + Jdet2
+
+    return Jdet
